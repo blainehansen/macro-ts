@@ -1,0 +1,14 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"strict": true,
+		"declaration": false,
+		"sourceMap": false,
+		"target": "esnext",
+		"module": "amd",
+		"moduleResolution": "node",
+		"outFile": "main.js",
+		"baseUrl": "."
+	},
+	"include": []
+}

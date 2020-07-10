@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"declaration": true,
+		"sourceMap": true,
+		"target": "esnext",
+		"module": "none",
+		"moduleResolution": "node",
+		"outDir": "dist"
+	},
+	"include": [
+		"lib/**/*"
+	]
+}
