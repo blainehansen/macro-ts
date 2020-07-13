@@ -29,11 +29,11 @@ type Macro =
 		type: 'import',
 		// StringLiteral can have globs
 		importMacro: (path: string, args: ts.NodeArray<ts.Expression>, /* TODO probably also need import pattern */ context: ImportContext) => {
-			// to be inlined into the calling typescript file
+			// to be inlined into the calling typescript file as a replacement for the import statement
 			statements?: ts.NodeArray<ts.Statement>,
 			// these further files will be processed as if an importMacro with the name extension had been applied to them directly
 			furtherFiles?: { extension: string, source: string }[],
-			// a "file" of typescript that this import produces
+			// a "file" of typescript that this import produces at path
 			ts?: ts.NodeArray<ts.Statement>,
 			resources?: Resource[],
 		},
