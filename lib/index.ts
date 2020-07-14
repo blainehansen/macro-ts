@@ -26,19 +26,14 @@ type ImportMacroBasic = {
 // type ImportMacro<T extends ImportMacroBasic> = (
 type ImportMacro = (
 	path: string,
-	clause: ts.ImportClause | undefined,
+	clause: { isExport: false, clause: ts.ImportClause } | { isExport: true, clause: ts.NamedExportBindings } | undefined,
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
 ) => ImportMacroBasic
-// we can discriminate this based on export or import
-// or perhaps we can just discourage that pattern? it will tend to lead to redundant imports
-// this is for isExportDeclaration
-// exportClause?: NamedExportBindings;
-// moduleSpecifier?: Expression;
 // type ImportMacroReturn<T extends ImportMacroBasic> = ReturnType<ImportMacro<T>>
 type ImportMacroReturn = ReturnType<ImportMacro>
 
-// TODO at some point these will all return errors
+// TODO at some point these will all return Result
 function attemptBlockMacro(statement: ts.Statement, block: ts.Statement | undefined): BlockMacroReturn | undefined {
 	if (!(
 		ts.isExpressionStatement(statement)
@@ -71,9 +66,11 @@ function attemptFunctionMacro(node: ts.Node): FunctionMacroReturn | undefined {
 	return macro.macro(node.arguments, node.typeArguments)
 }
 
-function attemptImportMacro({ importClause, moduleSpecifier }: ts.ImportDeclaration): ImportMacroReturn | undefined {
+function attemptImportMacro(declaration: ts.ImportDeclaration | ts.ExportDeclaration): ImportMacroReturn | undefined {
+	const moduleSpecifier = declaration.moduleSpecifier
 	if (!(
-		ts.isCallExpression(moduleSpecifier)
+		moduleSpecifier
+		&& ts.isCallExpression(moduleSpecifier)
 		&& ts.isNonNullExpression(moduleSpecifier.expression)
 		&& ts.isNonNullExpression(moduleSpecifier.expression.expression)
 		&& ts.isIdentifier(moduleSpecifier.expression.expression.expression)
@@ -85,7 +82,15 @@ function attemptImportMacro({ importClause, moduleSpecifier }: ts.ImportDeclarat
 
 	const macro = macros[moduleSpecifier.expression.expression.expression.text]
 	if (!macro || macro.type !== 'import') throw new Error()
-	return macro.macro(path.text, importClause, ts.createNodeArray(moduleSpecifier.arguments.slice(1)), moduleSpecifier.typeArguments)
+
+	return macro.macro(
+		path.text,
+		ts.isExportDeclaration(declaration)
+			? declaration.exportClause ? { isExport: true, clause: declaration.exportClause } : undefined
+			: declaration.importClause ? { isExport: false, clause: declaration.importClause } : undefined,
+		ts.createNodeArray(moduleSpecifier.arguments.slice(1)),
+		moduleSpecifier.typeArguments,
+	)
 }
 
 const macros: Dict<Macro> = {
@@ -121,21 +126,29 @@ const macros: Dict<Macro> = {
 	}},
 
 	y: { type: 'import', macro: (path, clause, args, typeArgs) => {
-		// if (args.length !== 1) throw new Error()
-		// const namespace
+		if (args.length !== 1) throw new Error()
+		const typeName = args[0]
+		if (!ts.isIdentifier(typeName)) throw new Error()
+		if (
+			!clause
+			|| clause.isExport
+			|| clause.clause.name
+			|| !clause.clause.namedBindings
+			|| !ts.isNamespaceImport(clause.clause.namedBindings)
+		) throw new Error()
 
 		return { statements: [
 			ts.createModuleDeclaration(
 				undefined,
 				undefined,
-				ts.createIdentifier('f'),
+				clause.clause.namedBindings.name,
 				ts.createModuleBlock([
 					ts.createTypeAliasDeclaration(
 						undefined,
 						[ts.createModifier(ts.SyntaxKind.ExportKeyword)],
-						ts.createIdentifier('Metric'),
+						typeName,
 						undefined,
-						ts.createLiteralTypeNode(ts.createStringLiteral('metrics')),
+						ts.createLiteralTypeNode(ts.createStringLiteral(path)),
 					),
 				]),
 				ts.NodeFlags.Namespace,
@@ -187,6 +200,7 @@ function attemptVisitStatement(
 			if (append) Array.prototype.push.apply(appends, append)
 			return statement
 		}
+		// TODO expand macros inside node.arguments?
 		const macroResult = attemptFunctionMacro(node)
 		if (macroResult) {
 			const { prepend, expression, append } = macroResult
@@ -227,8 +241,15 @@ function attemptVisitStatement(
 			statement,
 			statement.decorators ? statement.decorators.map(visitNodeSubsuming) : undefined,
 			statement.modifiers, statement.asteriskToken, statement.name,
-			// TODO parameters can have initializers, which are expressions. maybe visit those?
-			statement.typeParameters, statement.parameters, statement.type,
+			statement.typeParameters, statement.parameters.map(parameter => {
+				return parameter.initializer
+					? ts.updateParameter(
+						parameter, parameter.decorators, parameter.modifiers, parameter.dotDotDotToken,
+						parameter.name, parameter.questionToken, parameter.type,
+						visitNodeSubsuming(parameter.initializer),
+					)
+					: parameter
+			}), statement.type,
 			statement.body ? ts.updateBlock(statement.body, flatVisitStatements(statement.body.statements, context)) : undefined,
 		))
 
@@ -364,7 +385,7 @@ function attemptVisitStatement(
 			visitNodeSubsuming(statement.expression),
 		))
 
-	else if (ts.isImportDeclaration(statement)) {
+	else if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
 		const result = attemptImportMacro(statement)
 		if (result) {
 			const { statements } = result
@@ -375,19 +396,12 @@ function attemptVisitStatement(
 		return { statement }
 	}
 
-	// TODO the only reason we care about isExportDeclaration is because they are implicitly imports as well
-	// maybe we should discourage this though
-	// else if (ts.isExportDeclaration(statement))
-	// 	return include(ts.updateExportDeclaration(statement))
-
-	// else if (ts.isImportEqualsDeclaration(statement))
-	// 	return include(ts.updateImportEqualsDeclaration(statement))
-
 	else if (
 		ts.isEmptyStatement(statement) || ts.isMissingDeclaration(statement)
 		|| ts.isDebuggerStatement(statement) || ts.isBreakStatement(statement) || ts.isContinueStatement(statement)
 		|| ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
 		|| ts.isNamespaceExportDeclaration(statement)
+		|| ts.isImportEqualsDeclaration(statement)
 	)
 		return { statement }
 
@@ -403,6 +417,7 @@ function flatVisitStatements(
 	while (index < statements.length) {
 		const current = statements[index]
 
+		// TODO expand macros inside node.statements?
 		const result = attemptBlockMacro(current, statements[index + 1])
 		if (result) {
 			Array.prototype.push.apply(finalStatements, result)
@@ -506,3 +521,28 @@ compile('./app/main.ts')
 
 // just to get it off my mind, we'll use rollup to do the actual tree shaking and its plugin ecosystem, minification etc
 // https://rollupjs.org/guide/en/#javascript-api
+
+
+
+// const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })
+// function _printNodes(nodes: ts.Node[]) {
+// 	const resultFile = ts.createSourceFile('', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS)
+// 	let printed = ''
+// 	for (const node of nodes)
+// 		printed += '\n' + printer.printNode(ts.EmitHint.Unspecified, node, resultFile)
+
+// 	return printed
+// }
+
+// const n = ts.createExportDeclaration(
+// 	/*decorators:*/ undefined,
+// 	/*modifiers:*/ undefined,
+// 	/*exportClause: NamedExportBindings | undefined */ ts.createNamespaceExport(ts.createIdentifier('a')),
+// 	/*moduleSpecifier?: Expression */ ts.createStringLiteral('b'),
+// 	/*isTypeOnly?:*/ false,
+// )
+
+// console.log(_printNodes([
+// 	ts.createNamespaceExportDeclaration('a'),
+// 	ts.createNamespaceExportDeclaration(ts.createIdentifier('b')),
+// ]))
