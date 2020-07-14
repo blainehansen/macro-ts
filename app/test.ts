@@ -99,3 +99,6 @@ namespace a {
 
 let a: number | undefined = 1
 export default { a: die!!(a) }
+
+import * as f from y!!('metrics', Metric)
+const a: f.Metric = 'metrics'

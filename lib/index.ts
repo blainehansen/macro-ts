@@ -7,7 +7,7 @@ type Dict<T> = { [key: string]: T | undefined }
 type Macro =
 	| { type: 'block', macro: BlockMacro }
 	| { type: 'function', macro: FunctionMacro }
-	// | { type: 'import', macro: ImportMacro }
+	| { type: 'import', macro: ImportMacro }
 
 type BlockMacro = (args: ts.NodeArray<ts.Statement>) => ts.Statement[]
 type BlockMacroReturn = ReturnType<BlockMacro>
@@ -19,8 +19,24 @@ type FunctionMacro = (args: ts.NodeArray<ts.Expression>, typeArgs: ts.NodeArray<
 }
 type FunctionMacroReturn = ReturnType<FunctionMacro>
 
-// type ImportMacro = () => {}
-// type ImportMacroReturn = ReturnType<ImportMacro>
+// interface ImportMacroBasic {
+type ImportMacroBasic = {
+	statements: ts.Statement[],
+}
+// type ImportMacro<T extends ImportMacroBasic> = (
+type ImportMacro = (
+	path: string,
+	clause: ts.ImportClause | undefined,
+	args: ts.NodeArray<ts.Expression>,
+	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
+) => ImportMacroBasic
+// we can discriminate this based on export or import
+// or perhaps we can just discourage that pattern? it will tend to lead to redundant imports
+// this is for isExportDeclaration
+// exportClause?: NamedExportBindings;
+// moduleSpecifier?: Expression;
+// type ImportMacroReturn<T extends ImportMacroBasic> = ReturnType<ImportMacro<T>>
+type ImportMacroReturn = ReturnType<ImportMacro>
 
 // TODO at some point these will all return errors
 function attemptBlockMacro(statement: ts.Statement, block: ts.Statement | undefined): BlockMacroReturn | undefined {
@@ -55,6 +71,23 @@ function attemptFunctionMacro(node: ts.Node): FunctionMacroReturn | undefined {
 	return macro.macro(node.arguments, node.typeArguments)
 }
 
+function attemptImportMacro({ importClause, moduleSpecifier }: ts.ImportDeclaration): ImportMacroReturn | undefined {
+	if (!(
+		ts.isCallExpression(moduleSpecifier)
+		&& ts.isNonNullExpression(moduleSpecifier.expression)
+		&& ts.isNonNullExpression(moduleSpecifier.expression.expression)
+		&& ts.isIdentifier(moduleSpecifier.expression.expression.expression)
+	))
+		return undefined
+
+	const path = moduleSpecifier.arguments[0]
+	if (!path || !ts.isStringLiteral(path)) throw new Error()
+
+	const macro = macros[moduleSpecifier.expression.expression.expression.text]
+	if (!macro || macro.type !== 'import') throw new Error()
+	return macro.macro(path.text, importClause, ts.createNodeArray(moduleSpecifier.arguments.slice(1)), moduleSpecifier.typeArguments)
+}
+
 const macros: Dict<Macro> = {
 	die: { type: 'function', macro: args => {
 		if (args.length !== 1) throw new Error()
@@ -85,6 +118,29 @@ const macros: Dict<Macro> = {
 			expression: target,
 			append: [],
 		}
+	}},
+
+	y: { type: 'import', macro: (path, clause, args, typeArgs) => {
+		// if (args.length !== 1) throw new Error()
+		// const namespace
+
+		return { statements: [
+			ts.createModuleDeclaration(
+				undefined,
+				undefined,
+				ts.createIdentifier('f'),
+				ts.createModuleBlock([
+					ts.createTypeAliasDeclaration(
+						undefined,
+						[ts.createModifier(ts.SyntaxKind.ExportKeyword)],
+						ts.createIdentifier('Metric'),
+						undefined,
+						ts.createLiteralTypeNode(ts.createStringLiteral('metrics')),
+					),
+				]),
+				ts.NodeFlags.Namespace,
+			),
+		] }
 	}},
 }
 
@@ -308,16 +364,24 @@ function attemptVisitStatement(
 			visitNodeSubsuming(statement.expression),
 		))
 
+	else if (ts.isImportDeclaration(statement)) {
+		const result = attemptImportMacro(statement)
+		if (result) {
+			const { statements } = result
+			if (statements.length === 0) throw new Error()
+			const [statement, ...append] = statements
+			return { statement, append }
+		}
+		return { statement }
+	}
+
 	// TODO the only reason we care about isExportDeclaration is because they are implicitly imports as well
 	// maybe we should discourage this though
 	// else if (ts.isExportDeclaration(statement))
 	// 	return include(ts.updateExportDeclaration(statement))
 
-	// else if (ts.isImportDeclaration(statement))
-	// 	return include(ts.updateImportDeclaration(statement))
 	// else if (ts.isImportEqualsDeclaration(statement))
 	// 	return include(ts.updateImportEqualsDeclaration(statement))
-
 
 	else if (
 		ts.isEmptyStatement(statement) || ts.isMissingDeclaration(statement)
