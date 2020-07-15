@@ -1,24 +1,32 @@
+import ts = require('typescript')
 // import * as path from 'path'
 // import * as fs from 'fs'
 
 import { Dict } from './utils'
+import { createTransformer, Macro } from './transformer'
 
 const alwaysOptions = {
 	strict: true, target: ts.ScriptTarget.ESNext,
 	module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs,
 }
 
-export function compile(fileName: string) {
+type File = { filename: string, source: string }
+
+// <T extends ImportMacroBasic>
+export function compile(fileName: string, macros: Dict<Macro>) {
 	const initialOptions = { ...alwaysOptions, noEmit: true, declaration: false, sourceMap: false }
-	const initialDefaultCompilerHost = ts.createCompilerHost(initialOptions)
-	const initialProgram = ts.createProgram(
-		[fileName], initialOptions,
-		{ ...initialDefaultCompilerHost, getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile) {
-			const s = initialDefaultCompilerHost.readFile(fileName)
-			if (s === undefined) return undefined
-			return ts.createSourceFile(fileName, s, languageVersion, /* setParentNodes */ true)
-		}},
-	)
+	// const initialDefaultCompilerHost = ts.createCompilerHost(initialOptions)
+	// const initialProgram = ts.createProgram(
+	// 	[fileName], initialOptions,
+	// 	{ ...initialDefaultCompilerHost, getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile) {
+	// 		const s = initialDefaultCompilerHost.readFile(fileName)
+	// 		if (s === undefined) return undefined
+	// 		return ts.createSourceFile(fileName, s, languageVersion, /* setParentNodes */ false)
+	// 	}},
+	// )
+	const initialProgram = ts.createProgram([fileName], initialOptions)
+
+	const transformer = createTransformer(macros)
 
 	const transformedSourceMap: Dict<string> = {}
 	const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })

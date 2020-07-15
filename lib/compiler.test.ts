@@ -1,3 +1,8 @@
+import ts = require('typescript')
+
+import { Dict } from './utils'
+import { Macro } from './transformer'
+
 const macros: Dict<Macro> = {
 	die: { type: 'function', macro: args => {
 		if (args.length !== 1) throw new Error()
@@ -61,3 +66,7 @@ const macros: Dict<Macro> = {
 		] }
 	}},
 }
+
+// describe('compiler', () => {
+
+// })
