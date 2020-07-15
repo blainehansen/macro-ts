@@ -6,39 +6,6 @@ import ts = require('typescript')
 // - a web library "bundler". this one's tricky. people very well might want to include css or whatever. so it seems in this situation, we just produce files, and their macros determine entirely what kinds of transformations have happened to them
 // - a web component bundler. eh
 
-
-type ImportContext = {
-	projectEntryPath: string,
-	currentFileRelativePath: string,
-	currentFileBasename: string,
-}
-
-type Macro =
-	| {
-		// called in the form: macro!!()
-		type: 'function',
-		functionMacro: (args: ts.NodeArray<ts.Expression>) => ts.Expression,
-	}
-	| {
-		// called in the form: macro!!{}
-		type: 'block',
-		blockMacro: (args: ts.NodeArray<ts.Statement>) => ts.NodeArray<ts.Statement>,
-	}
-	| {
-		// called in the form: import whatever from macro!!('path')
-		type: 'import',
-		// StringLiteral can have globs
-		importMacro: (path: string, args: ts.NodeArray<ts.Expression>, /* TODO probably also need import pattern */ context: ImportContext) => {
-			// to be inlined into the calling typescript file as a replacement for the import statement
-			statements?: ts.NodeArray<ts.Statement>,
-			// these further files will be processed as if an importMacro with the name extension had been applied to them directly
-			furtherFiles?: { extension: string, source: string }[],
-			// a "file" of typescript that this import produces at path
-			ts?: ts.NodeArray<ts.Statement>,
-			resources?: Resource[],
-		},
-	}
-
 type Resource =
 	| {
 		// sourcemaps?
@@ -66,4 +33,5 @@ type HtmlFile = {
 	body: HtmlNode[],
 }
 
-type MacroTypescriptCompiler = (entryPath: string, macros: Dict<Macro>) => void?
+// just to get it off my mind, we'll use rollup to do the actual tree shaking and its plugin ecosystem, minification etc
+// https://rollupjs.org/guide/en/#javascript-api
