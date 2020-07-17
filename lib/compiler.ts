@@ -1,5 +1,5 @@
 import ts = require('typescript')
-// import * as path from 'path'
+import * as path from 'path'
 // import * as fs from 'fs'
 
 import { Dict } from './utils'
@@ -10,10 +10,7 @@ const alwaysOptions = {
 	module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs,
 }
 
-type File = { filename: string, source: string }
-
-// <T extends ImportMacroBasic>
-export function compile(fileName: string, macros: Dict<Macro>) {
+export function compile<T>(fileName: string, macros: Dict<Macro<T>>, sendPayload: (payload: T) => void) {
 	const initialOptions = { ...alwaysOptions, noEmit: true, declaration: false, sourceMap: false }
 	// const initialDefaultCompilerHost = ts.createCompilerHost(initialOptions)
 	// const initialProgram = ts.createProgram(
@@ -26,7 +23,13 @@ export function compile(fileName: string, macros: Dict<Macro>) {
 	// )
 	const initialProgram = ts.createProgram([fileName], initialOptions)
 
-	const transformer = createTransformer(macros)
+	const entryDir = path.dirname(fileName)
+	const entryFile = path.basename(fileName)
+	const transformer = createTransformer(macros, sendPayload, entryDir, entryFile, sourceFileName => {
+		const currentDir = path.relative(entryDir, path.dirname(sourceFileName))
+		const currentFile = path.basename(sourceFileName)
+		return { currentDir, currentFile }
+	})
 
 	const transformedSourceMap: Dict<string> = {}
 	const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
@@ -74,7 +77,8 @@ export function compile(fileName: string, macros: Dict<Macro>) {
 	// if (diagnostics.length)
 	for (const diagnostic of diagnostics)
 		console.log(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
-	const emitResult = transformedProgram.emit()
+	// const emitResult = transformedProgram.emit()
+	transformedProgram.emit()
 
 	// const exitCode = emitResult.emitSkipped ? 1 : 0
 	// process.exit(exitCode)

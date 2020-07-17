@@ -3,9 +3,5 @@
 	"compilerOptions": {
 		"noUnusedLocals": true,
 		"noUnusedParameters": true
-	},
-	"exclude": [
-		"**/*.test.ts",
-		"node_modules"
-	]
+	}
 }

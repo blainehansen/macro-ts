@@ -2,5 +2,5 @@ export {
 	Macro,
 	BlockMacro, BlockMacroReturn,
 	FunctionMacro, FunctionMacroReturn,
-	ImportMacroBasic, ImportMacro, ImportMacroReturn,
+	ImportMacro, ImportMacroReturn,
 } from './transformer'

@@ -1,7 +1,7 @@
 import ts = require('typescript')
 import { Dict, PickVariants } from './utils'
 
-export type Macro<T extends ImportMacroBasic = ImportMacroBasic> =
+export type Macro<T = undefined> =
 	| { type: 'block', macro: BlockMacro }
 	| { type: 'function', macro: FunctionMacro }
 	| { type: 'import', macro: ImportMacro<T> }
@@ -22,24 +22,51 @@ export function FunctionMacro(macro: FunctionMacro): PickVariants<Macro, 'type',
 	return { type: 'function', macro }
 }
 
-export type ImportMacroBasic = {
-	statements: ts.Statement[],
+export type FileContext = {
+	entryDir: string, entryFile: string,
+	currentDir: string, currentFile: string
 }
-type ImportMacro<T extends ImportMacroBasic> = (
-	path: string,
-	clause: { isExport: false, clause: ts.ImportClause } | { isExport: true, clause: ts.NamedExportBindings } | undefined,
+
+export type ImportMacro<T> = (
+	ctx: FileContext,
+	targetPath: string,
+	clause: { isExport: false, clause: ts.ImportClause | undefined } | { isExport: true, clause: ts.NamedExportBindings | undefined },
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => T
-export type ImportMacroReturn<T extends ImportMacroBasic> = ReturnType<ImportMacro<T>>
-export function ImportMacro<T extends ImportMacroBasic>(macro: ImportMacro<T>): PickVariants<Macro<T>, 'type', 'import'> {
+) => {
+	statements: ts.Statement[],
+	payload: T,
+}
+export type ImportMacroReturn<T> = ReturnType<ImportMacro<T>>
+export function ImportMacro<T>(macro: ImportMacro<T>): PickVariants<Macro<T>, 'type', 'import'> {
 	return { type: 'import', macro }
 }
 
 
+type CompileContext<T> = {
+	macros: Dict<Macro<T>>,
+	sendPayload: (payload: T) => void,
+	current: FileContext,
+}
+export function createTransformer<T>(
+	macros: Dict<Macro<T>>,
+	sendPayload: (payload: T) => void,
+	entryDir: string,
+	entryFile: string,
+	dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
+): ts.TransformerFactory<ts.SourceFile> {
+	return context => sourceFile => {
+		const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
+		const ctx = { macros, sendPayload, current: { entryDir, entryFile, currentDir, currentFile } }
+		return ts.updateSourceFileNode(sourceFile, flatVisitStatements(ctx, sourceFile.statements, context))
+	}
+}
+
+
 // TODO at some point these will all return Result
-function attemptBlockMacro(
-	macros: Dict<Macro>,
+// TODO all of these macro could choose to access the filesystem, so we should make all of them async
+function attemptBlockMacro<T>(
+	{ macros }: CompileContext<T>,
 	statement: ts.Statement,
 	block: ts.Statement | undefined,
 ): BlockMacroReturn | undefined {
@@ -60,8 +87,8 @@ function attemptBlockMacro(
 	return macro.macro(block.statements)
 }
 
-function attemptFunctionMacro(
-	macros: Dict<Macro>,
+function attemptFunctionMacro<T>(
+	{ macros }: CompileContext<T>,
 	node: ts.Node,
 ): FunctionMacroReturn | undefined {
 	if (!(
@@ -77,8 +104,8 @@ function attemptFunctionMacro(
 	return macro.macro(node.arguments, node.typeArguments)
 }
 
-function attemptImportMacro<T extends ImportMacroBasic>(
-	macros: Dict<Macro<T>>,
+function attemptImportMacro<T>(
+	{ macros, current }: CompileContext<T>,
 	declaration: ts.ImportDeclaration | ts.ExportDeclaration,
 ): ImportMacroReturn<T> | undefined {
 	const moduleSpecifier = declaration.moduleSpecifier
@@ -98,10 +125,10 @@ function attemptImportMacro<T extends ImportMacroBasic>(
 	if (!macro || macro.type !== 'import') throw new Error()
 
 	return macro.macro(
-		path.text,
+		current, path.text,
 		ts.isExportDeclaration(declaration)
-			? declaration.exportClause ? { isExport: true, clause: declaration.exportClause } : undefined
-			: declaration.importClause ? { isExport: false, clause: declaration.importClause } : undefined,
+			? { isExport: true, clause: declaration.exportClause }
+			: { isExport: false, clause: declaration.importClause },
 		ts.createNodeArray(moduleSpecifier.arguments.slice(1)),
 		moduleSpecifier.typeArguments,
 	)
@@ -109,49 +136,50 @@ function attemptImportMacro<T extends ImportMacroBasic>(
 
 
 
-type ExpandedStatement = { prepend?: ts.Statement[], statement: ts.Statement, append?: ts.Statement[] }
-function visitStatement(
-	macros: Dict<Macro>,
+type ExpandedStatement = { prepend?: ts.Statement[], statement?: ts.Statement, append?: ts.Statement[] }
+function visitStatement<T>(
+	ctx: CompileContext<T>,
 	statement: ts.Statement,
 	context: ts.TransformationContext,
 ): ExpandedStatement {
-	const result = attemptVisitStatement(macros, statement, context)
+	const result = attemptVisitStatement(ctx, statement, context)
 	if (!result) throw new Error()
 	return result
 }
 
-function visitBlock(
-	macros: Dict<Macro>,
+function visitBlock<T>(
+	ctx: CompileContext<T>,
 	block: ts.Block,
 	context: ts.TransformationContext,
 ): ts.Block {
-	return ts.updateBlock(block, flatVisitStatements(macros, block.statements, context))
+	return ts.updateBlock(block, flatVisitStatements(ctx, block.statements, context))
 }
-function visitStatementIntoBlock(
-	macros: Dict<Macro>,
+function visitStatementIntoBlock<T>(
+	ctx: CompileContext<T>,
 	inputStatement: ts.Statement,
 	context: ts.TransformationContext,
 ): ts.Statement {
 	if (ts.isBlock(inputStatement))
-		return visitBlock(macros, inputStatement, context)
+		return visitBlock(ctx, inputStatement, context)
 
-	const { prepend = [], statement, append = [] } = visitStatement(macros, inputStatement, context)
+	const { prepend = [], statement, append = [] } = visitStatement(ctx, inputStatement, context)
 	if (prepend.length > 0 || append.length > 0)
-		return ts.createBlock(prepend.concat([statement].concat(append)))
-	else return statement
+		return ts.createBlock(prepend.concat(statement ? [statement] : []).concat(append))
+	if (!statement) throw new Error()
+	return statement
 }
 
 
-function attemptVisitStatement<T extends ImportMacroBasic>(
-	macros: Dict<Macro<T>>,
+function attemptVisitStatement<T>(
+	ctx: CompileContext<T>,
 	statement: ts.Node,
 	context: ts.TransformationContext,
 ): ExpandedStatement | undefined {
 	const prepends = [] as ts.Statement[]
 	const appends = [] as ts.Statement[]
 
-	function subsumingVisitor(node: ts.Node): ts.Node {
-		const statementResult = attemptVisitStatement(macros, node, context)
+	function subsumingVisitor(node: ts.Node): ts.Node | undefined {
+		const statementResult = attemptVisitStatement(ctx, node, context)
 		if (statementResult) {
 			const { prepend, statement, append } = statementResult
 			if (prepend) Array.prototype.push.apply(prepends, prepend)
@@ -159,7 +187,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 			return statement
 		}
 		// TODO expand macros inside node.arguments?
-		const macroResult = attemptFunctionMacro(macros, node)
+		const macroResult = attemptFunctionMacro(ctx, node)
 		if (macroResult) {
 			const { prepend, expression, append } = macroResult
 			if (prepend) Array.prototype.push.apply(prepends, prepend)
@@ -183,7 +211,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 	}
 
 	if (ts.isBlock(statement))
-		return { statement: visitBlock(macros, statement, context) }
+		return { statement: visitBlock(ctx, statement, context) }
 
 	else if (ts.isVariableStatement(statement))
 		return include(ts.updateVariableStatement(
@@ -208,7 +236,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 					)
 					: parameter
 			}), statement.type,
-			statement.body ? ts.updateBlock(statement.body, flatVisitStatements(macros, statement.body.statements, context)) : undefined,
+			statement.body ? ts.updateBlock(statement.body, flatVisitStatements(ctx, statement.body.statements, context)) : undefined,
 		))
 
 	else if (ts.isReturnStatement(statement))
@@ -221,8 +249,8 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 		return include(ts.updateIf(
 			statement,
 			visitNodeSubsuming(statement.expression),
-			visitStatementIntoBlock(macros, statement.thenStatement, context),
-			statement.elseStatement ? visitStatementIntoBlock(macros, statement.elseStatement, context) : undefined,
+			visitStatementIntoBlock(ctx, statement.thenStatement, context),
+			statement.elseStatement ? visitStatementIntoBlock(ctx, statement.elseStatement, context) : undefined,
 		))
 
 	else if (ts.isSwitchStatement(statement))
@@ -236,10 +264,10 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 						case ts.SyntaxKind.CaseClause: return ts.updateCaseClause(
 							clause,
 							visitNodeSubsuming(clause.expression),
-							flatVisitStatements(macros, clause.statements, context),
+							flatVisitStatements(ctx, clause.statements, context),
 						)
 						case ts.SyntaxKind.DefaultClause: return ts.updateDefaultClause(
-							clause, flatVisitStatements(macros, clause.statements, context),
+							clause, flatVisitStatements(ctx, clause.statements, context),
 						)
 					}
 				}),
@@ -250,7 +278,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 		return include(ts.updateWhile(
 			statement,
 			visitNodeSubsuming(statement.expression),
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 		))
 
 	else if (ts.isForStatement(statement))
@@ -259,7 +287,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 			statement.initializer ? visitNodeSubsuming(statement.initializer) : undefined,
 			statement.condition ? visitNodeSubsuming(statement.condition) : undefined,
 			statement.incrementor ? visitNodeSubsuming(statement.incrementor) : undefined,
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 		))
 
 	else if (ts.isForInStatement(statement))
@@ -267,7 +295,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 			statement,
 			visitNodeSubsuming(statement.initializer),
 			visitNodeSubsuming(statement.expression),
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 		))
 
 	else if (ts.isForOfStatement(statement))
@@ -276,13 +304,13 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 			statement.awaitModifier,
 			visitNodeSubsuming(statement.initializer),
 			visitNodeSubsuming(statement.expression),
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 		))
 
 	else if (ts.isDoStatement(statement))
 		return include(ts.updateDo(
 			statement,
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 			visitNodeSubsuming(statement.expression),
 		))
 
@@ -294,9 +322,9 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 	else if (ts.isTryStatement(statement))
 		return include(ts.updateTry(
 			statement,
-			visitBlock(macros, statement.tryBlock, context),
+			visitBlock(ctx, statement.tryBlock, context),
 			statement.catchClause ? visitNodeSubsuming(statement.catchClause) : undefined,
-			statement.finallyBlock ? visitBlock(macros, statement.finallyBlock, context) : undefined,
+			statement.finallyBlock ? visitBlock(ctx, statement.finallyBlock, context) : undefined,
 		))
 
 	else if (ts.isClassDeclaration(statement))
@@ -311,7 +339,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 		return include(ts.updateWith(
 			statement,
 			visitNodeSubsuming(statement.expression),
-			visitStatementIntoBlock(macros, statement.statement, context),
+			visitStatementIntoBlock(ctx, statement.statement, context),
 		))
 
 	else if (ts.isLabeledStatement(statement))
@@ -333,7 +361,7 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 			statement.body ? visitNodeSubsuming(statement.body) : undefined,
 		))
 	else if (ts.isModuleBlock(statement))
-		return { statement: ts.updateModuleBlock(statement, flatVisitStatements(macros, statement.statements, context)) }
+		return { statement: ts.updateModuleBlock(statement, flatVisitStatements(ctx, statement.statements, context)) }
 
 	else if (ts.isExportAssignment(statement))
 		return include(ts.updateExportAssignment(
@@ -344,10 +372,10 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 		))
 
 	else if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
-		const result = attemptImportMacro(macros, statement)
+		const result = attemptImportMacro(ctx, statement)
 		if (result) {
-			const { statements } = result
-			if (statements.length === 0) throw new Error()
+			const { statements, payload } = result
+			ctx.sendPayload(payload)
 			const [statement, ...append] = statements
 			return { statement, append }
 		}
@@ -366,8 +394,8 @@ function attemptVisitStatement<T extends ImportMacroBasic>(
 	return undefined
 }
 
-function flatVisitStatements(
-	macros: Dict<Macro>,
+function flatVisitStatements<T>(
+	ctx: CompileContext<T>,
 	statements: ts.NodeArray<ts.Statement>,
 	context: ts.TransformationContext,
 ): ts.NodeArray<ts.Statement> {
@@ -377,29 +405,22 @@ function flatVisitStatements(
 		const current = statements[index]
 
 		// TODO expand macros inside node.statements?
-		const result = attemptBlockMacro(macros, current, statements[index + 1])
+		const result = attemptBlockMacro(ctx, current, statements[index + 1])
 		if (result) {
 			Array.prototype.push.apply(finalStatements, result)
 			index += 2
 			continue
 		}
 
-		const { prepend, statement, append } = visitStatement(macros, current, context)
+		const { prepend, statement, append } = visitStatement(ctx, current, context)
 		if (prepend) Array.prototype.push.apply(finalStatements, prepend)
-		finalStatements.push(statement)
+		if (statement) finalStatements.push(statement)
 		if (append) Array.prototype.push.apply(finalStatements, append)
 		index++
 	}
 
 	return ts.createNodeArray(finalStatements)
 }
-
-export function createTransformer<T extends ImportMacroBasic>(macros: Dict<Macro<T>>): ts.TransformerFactory<ts.SourceFile> {
-	return context => sourceFile => {
-		return ts.updateSourceFileNode(sourceFile, flatVisitStatements(macros, sourceFile.statements, context))
-	}
-}
-
 
 // const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })
 // function _printNodes(nodes: ts.Node[]) {
@@ -410,16 +431,3 @@ export function createTransformer<T extends ImportMacroBasic>(macros: Dict<Macro
 
 // 	return printed
 // }
-
-// const n = ts.createExportDeclaration(
-// 	/*decorators:*/ undefined,
-// 	/*modifiers:*/ undefined,
-// 	/*exportClause: NamedExportBindings | undefined */ ts.createNamespaceExport(ts.createIdentifier('a')),
-// 	/*moduleSpecifier?: Expression */ ts.createStringLiteral('b'),
-// 	/*isTypeOnly?:*/ false,
-// )
-
-// console.log(_printNodes([
-// 	ts.createNamespaceExportDeclaration('a'),
-// 	ts.createNamespaceExportDeclaration(ts.createIdentifier('b')),
-// ]))

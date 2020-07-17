@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 // it seems there a few subcommands
 // - run: does the equivalent of ts-node
 // - build: does the equivalent of tsc
