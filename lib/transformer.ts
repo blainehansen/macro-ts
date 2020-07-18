@@ -1,10 +1,10 @@
 import ts = require('typescript')
-import { Dict, PickVariants } from './utils'
+import { Dict, PickVariants, AbstractFileSystem } from './utils'
 
-export type Macro<T = undefined> =
+export type Macro<S = undefined> =
 	| { type: 'block', macro: BlockMacro }
 	| { type: 'function', macro: FunctionMacro }
-	| { type: 'import', macro: ImportMacro<T> }
+	| { type: 'import', macro: ImportMacro<S> }
 
 export type BlockMacro = (args: ts.NodeArray<ts.Statement>) => ts.Statement[]
 export type BlockMacroReturn = ReturnType<BlockMacro>
@@ -23,41 +23,46 @@ export function FunctionMacro(macro: FunctionMacro): PickVariants<Macro, 'type',
 }
 
 export type FileContext = {
-	entryDir: string, entryFile: string,
+	workingDir: string,
 	currentDir: string, currentFile: string
 }
 
-export type ImportMacro<T> = (
+export type ImportMacro<S> = (
 	ctx: FileContext,
 	targetPath: string,
+	targetSource: string,
 	clause: { isExport: false, clause: ts.ImportClause | undefined } | { isExport: true, clause: ts.NamedExportBindings | undefined },
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
 ) => {
 	statements: ts.Statement[],
-	payload: T,
+	targetTs?: string,
+	sources: Dict<S>,
 }
-export type ImportMacroReturn<T> = ReturnType<ImportMacro<T>>
-export function ImportMacro<T>(macro: ImportMacro<T>): PickVariants<Macro<T>, 'type', 'import'> {
+export type ImportMacroReturn<S> = ReturnType<ImportMacro<S>>
+export function ImportMacro<S>(macro: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
 	return { type: 'import', macro }
 }
 
+export type SourceChannel<S> = (sources: Dict<S>, targetTs: { path: string, source: string } | undefined) => void
 
-type CompileContext<T> = {
-	macros: Dict<Macro<T>>,
-	sendPayload: (payload: T) => void,
+type CompileContext<S> = {
+	macros: Dict<Macro<S>>,
+	sendSources: SourceChannel<S>,
 	current: FileContext,
+	// TODO I'm not sure this is the right idea. we have to assume what path they'll be reading from
+	fs: AbstractFileSystem,
 }
-export function createTransformer<T>(
-	macros: Dict<Macro<T>>,
-	sendPayload: (payload: T) => void,
-	entryDir: string,
-	entryFile: string,
+export function createTransformer<S>(
+	macros: Dict<Macro<S>>,
+	sendSources: SourceChannel<S>,
+	workingDir: string,
+	fs: AbstractFileSystem,
 	dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
 ): ts.TransformerFactory<ts.SourceFile> {
 	return context => sourceFile => {
 		const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
-		const ctx = { macros, sendPayload, current: { entryDir, entryFile, currentDir, currentFile } }
+		const ctx = { macros, sendSources, current: { workingDir, currentDir, currentFile }, fs }
 		return ts.updateSourceFileNode(sourceFile, flatVisitStatements(ctx, sourceFile.statements, context))
 	}
 }
@@ -65,8 +70,8 @@ export function createTransformer<T>(
 
 // TODO at some point these will all return Result
 // TODO all of these macro could choose to access the filesystem, so we should make all of them async
-function attemptBlockMacro<T>(
-	{ macros }: CompileContext<T>,
+function attemptBlockMacro<S>(
+	{ macros }: CompileContext<S>,
 	statement: ts.Statement,
 	block: ts.Statement | undefined,
 ): BlockMacroReturn | undefined {
@@ -87,8 +92,8 @@ function attemptBlockMacro<T>(
 	return macro.macro(block.statements)
 }
 
-function attemptFunctionMacro<T>(
-	{ macros }: CompileContext<T>,
+function attemptFunctionMacro<S>(
+	{ macros }: CompileContext<S>,
 	node: ts.Node,
 ): FunctionMacroReturn | undefined {
 	if (!(
@@ -104,10 +109,10 @@ function attemptFunctionMacro<T>(
 	return macro.macro(node.arguments, node.typeArguments)
 }
 
-function attemptImportMacro<T>(
-	{ macros, current }: CompileContext<T>,
+function attemptImportMacro<S>(
+	{ macros, current, sendSources, fs }: CompileContext<S>,
 	declaration: ts.ImportDeclaration | ts.ExportDeclaration,
-): ImportMacroReturn<T> | undefined {
+): ts.Statement[] | undefined {
 	const moduleSpecifier = declaration.moduleSpecifier
 	if (!(
 		moduleSpecifier
@@ -118,27 +123,34 @@ function attemptImportMacro<T>(
 	))
 		return undefined
 
-	const path = moduleSpecifier.arguments[0]
-	if (!path || !ts.isStringLiteral(path)) throw new Error()
+	const pathSpecifier = moduleSpecifier.arguments[0]
+	if (!pathSpecifier || !ts.isStringLiteral(pathSpecifier)) throw new Error()
 
 	const macro = macros[moduleSpecifier.expression.expression.expression.text]
 	if (!macro || macro.type !== 'import') throw new Error()
 
-	return macro.macro(
-		current, path.text,
+	const path = pathSpecifier.text
+	const source = fs.readFile(path)
+	if (source === undefined) throw new Error()
+
+	const { statements, sources, targetTs  } = macro.macro(
+		current, path, source,
 		ts.isExportDeclaration(declaration)
 			? { isExport: true, clause: declaration.exportClause }
 			: { isExport: false, clause: declaration.importClause },
 		ts.createNodeArray(moduleSpecifier.arguments.slice(1)),
 		moduleSpecifier.typeArguments,
 	)
+	sendSources(sources, targetTs ? { path, source: targetTs } : undefined)
+
+	return statements
 }
 
 
 
 type ExpandedStatement = { prepend?: ts.Statement[], statement?: ts.Statement, append?: ts.Statement[] }
-function visitStatement<T>(
-	ctx: CompileContext<T>,
+function visitStatement<S>(
+	ctx: CompileContext<S>,
 	statement: ts.Statement,
 	context: ts.TransformationContext,
 ): ExpandedStatement {
@@ -147,15 +159,15 @@ function visitStatement<T>(
 	return result
 }
 
-function visitBlock<T>(
-	ctx: CompileContext<T>,
+function visitBlock<S>(
+	ctx: CompileContext<S>,
 	block: ts.Block,
 	context: ts.TransformationContext,
 ): ts.Block {
 	return ts.updateBlock(block, flatVisitStatements(ctx, block.statements, context))
 }
-function visitStatementIntoBlock<T>(
-	ctx: CompileContext<T>,
+function visitStatementIntoBlock<S>(
+	ctx: CompileContext<S>,
 	inputStatement: ts.Statement,
 	context: ts.TransformationContext,
 ): ts.Statement {
@@ -170,8 +182,8 @@ function visitStatementIntoBlock<T>(
 }
 
 
-function attemptVisitStatement<T>(
-	ctx: CompileContext<T>,
+function attemptVisitStatement<S>(
+	ctx: CompileContext<S>,
 	statement: ts.Node,
 	context: ts.TransformationContext,
 ): ExpandedStatement | undefined {
@@ -372,10 +384,8 @@ function attemptVisitStatement<T>(
 		))
 
 	else if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
-		const result = attemptImportMacro(ctx, statement)
-		if (result) {
-			const { statements, payload } = result
-			ctx.sendPayload(payload)
+		const statements = attemptImportMacro(ctx, statement)
+		if (statements) {
 			const [statement, ...append] = statements
 			return { statement, append }
 		}
@@ -394,8 +404,8 @@ function attemptVisitStatement<T>(
 	return undefined
 }
 
-function flatVisitStatements<T>(
-	ctx: CompileContext<T>,
+function flatVisitStatements<S>(
+	ctx: CompileContext<S>,
 	statements: ts.NodeArray<ts.Statement>,
 	context: ts.TransformationContext,
 ): ts.NodeArray<ts.Statement> {
