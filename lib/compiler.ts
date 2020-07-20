@@ -30,8 +30,7 @@ const alwaysOptions = {
 // 	relative(fromPath: string, toPath: string) { return nodepath.relative(fromPath, toPath) }
 // }
 
-export type Producer<T> = T | (() => T)
-export type EntryFiles = Dict<{ lang: string }>
+export type EntryFile = { importer: string }
 
 function addAllEntries<T>(src: Dict<T>, dest: Dict<T>) {
 	// TODO perhaps get mad at overwrites
@@ -39,14 +38,13 @@ function addAllEntries<T>(src: Dict<T>, dest: Dict<T>) {
 		dest[key] = src[key]
 }
 
-export function compile<S>(
+
+export function transform<S>(
 	fs: AbstractFileSystem,
-	entries: EntryFiles,
+	entries: Dict<EntryFile>,
 	macros: Dict<Macro<S>>,
-	sourceConverter: (sources: Dict<S>) => Dict<string | Buffer>,
-	finalizer: (entries: EntryFiles, resources: Dict<string | Buffer>) => Dict<string | Buffer>,
-): void {
-	const transformedTsSourceMap: Dict<string> = {}
+) {
+	const transformedTsSources: Dict<string> = {}
 	const unprocessedSources: Dict<S> = {}
 
 	const workingDir = fs.getWorkingDirectory()
@@ -56,55 +54,64 @@ export function compile<S>(
 		return { currentDir, currentFile }
 	}
 	const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
-	const receivePayload: SourceChannel<S> = (sources, script) => {
+	const receivePayload: SourceChannel<S> = (script, sources) => {
 		if (script) {
 			const sourceFile = ts.createSourceFile(script.path, script.source, alwaysOptions.target)
 			const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-			transformedTsSourceMap[script.path] = printer.printFile(newSourceFile)
+			transformedTsSources[script.path] = printer.printFile(newSourceFile)
 		}
 		addAllEntries(sources, unprocessedSources)
 	}
 	const transformer = createTransformer(macros, receivePayload, workingDir, fs, dirMaker)
 
-	const entryScripts = [] as string[]
-	for (const [path, { lang }] of Object.entries(entries)) {
-		if (lang === 'ts') {
-			entryScripts.push(path)
+	const entryScripts = new Set<string>()
+	for (const [path, { importer }] of Object.entries(entries)) {
+		if (importer === 'ts') {
+			entryScripts.add(path)
 			continue
 		}
 
-		const macro = macros[lang]
+		const macro = macros[importer]
 		if (macro === undefined || macro.type !== 'import') throw new Error()
 		const source = fs.readFile(path)
 		if (source === undefined) throw new Error()
 		const { currentDir, currentFile } = dirMaker(path)
-		const { /*statements, */ sources, targetTs } = macro.macro(
-			{ workingDir, currentDir, currentFile }, path, source,
-			{ isExport: false, clause: undefined }, ts.createNodeArray([]), undefined,
-		)
-		if (targetTs)
-			entryScripts.push(path)
-		receivePayload(sources, targetTs ? { path, source: targetTs } : undefined)
+		const { sources, targetTs } = macro.macro({ workingDir, currentDir, currentFile }, path, source)
+		const tsPath = path + '.ts'
+		entryScripts.add(tsPath)
+		receivePayload({ path: tsPath, source: targetTs }, sources)
 	}
 
 
 	const initialOptions = { ...alwaysOptions, noEmit: true, declaration: false, sourceMap: false }
 	// TODO need to intervene in module resolution so this will discover any transformed entryScripts
-	const initialProgram = ts.createProgram(entryScripts, initialOptions)
+	const initialProgram = ts.createProgram([...entryScripts], initialOptions)
 
 	for (const sourceFile of initialProgram.getSourceFiles()) {
 		if (sourceFile.isDeclarationFile) continue
 		// TODO probably check here that this isn't one of the entry files, it's already been transformed
 
 		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-		transformedTsSourceMap[sourceFile.fileName] = printer.printFile(newSourceFile)
-		if (sourceFile.fileName !== 'app/App.ts') continue
-		console.log('sourceFile.fileName:', sourceFile.fileName)
-		console.log('transformedTsSourceMap[sourceFile.fileName]')
-		console.log(transformedTsSourceMap[sourceFile.fileName])
-		console.log()
+		transformedTsSources[sourceFile.fileName] = printer.printFile(newSourceFile)
+		// if (sourceFile.fileName !== 'app/App.ts') continue
+		// console.log('sourceFile.fileName:', sourceFile.fileName)
+		// console.log('transformedTsSources[sourceFile.fileName]')
+		// console.log(transformedTsSources[sourceFile.fileName])
+		// console.log()
 	}
 
+	return { entryScripts, unprocessedSources, transformedTsSources }
+}
+
+export function emit<S, R>(
+	fs: AbstractFileSystem,
+	entryScripts: Set<string>,
+	unprocessedSources: Dict<S>,
+	transformedTsSources: Dict<string>,
+	sourceConverter: (sources: Dict<S>) => Dict<R>,
+	jsLifter: (path: string, content: string, type: '.js' | '.js.map' | '.d.ts') => R,
+	finalizer: (entryScripts: Set<string>, resources: Dict<R>) => Dict<string | Buffer>,
+) {
 	const outputResources = sourceConverter(unprocessedSources)
 
 	const transformedRoundOptions = {
@@ -122,7 +129,7 @@ export function compile<S>(
 				console.log(fileName)
 				console.log()
 			}
-			const transformedSource = transformedTsSourceMap[fs.relative(process.cwd(), fileName)]
+			const transformedSource = transformedTsSources[fs.relative(process.cwd(), fileName)]
 			return transformedSource !== undefined
 				? ts.createSourceFile(fileName, transformedSource, languageVersion)
 				: defaultCompilerHost.getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
@@ -133,7 +140,7 @@ export function compile<S>(
 				console.log(fileName)
 				console.log()
 			}
-			return fs.relative(process.cwd(), fileName) in transformedTsSourceMap || defaultCompilerHost.fileExists(fileName)
+			return fs.relative(process.cwd(), fileName) in transformedTsSources || defaultCompilerHost.fileExists(fileName)
 		},
 		writeFile(fileName, content) {
 			console.log()
@@ -142,7 +149,12 @@ export function compile<S>(
 			// console.log()
 			// console.log(content)
 			// console.log()
-			outputResources[fileName] = content
+			outputResources[fileName] = jsLifter(
+				fileName, content,
+				fileName.endsWith('.d.ts') ? '.d.ts'
+					: fileName.endsWith('.js.map') ? '.js.map'
+					: '.js'
+			)
 		},
 		// getDefaultLibFileName: () => "lib.d.ts",
 		// getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
@@ -154,7 +166,7 @@ export function compile<S>(
 		// readFile,
 		// resolveModuleNames,
 	}
-	const transformedProgram = ts.createProgram(entryScripts, transformedRoundOptions, capturingCompilerHost)
+	const transformedProgram = ts.createProgram([...entryScripts], transformedRoundOptions, capturingCompilerHost)
 	const diagnostics = ts.getPreEmitDiagnostics(transformedProgram)
 	// use diagnostic.category === ts.DiagnosticCategory.Error to see if any of these are actually severe
 	// if (diagnostics.length)
@@ -167,9 +179,22 @@ export function compile<S>(
 	// const exitCode = emitResult.emitSkipped ? 1 : 0
 	// process.exit(exitCode)
 
-	const outputFiles = finalizer(entries, outputResources)
+	const outputFiles = finalizer(entryScripts, outputResources)
 	for (const [path, content] of Object.entries(outputFiles))
 		fs.writeFile(path, content)
+}
+
+
+export function compile<S, R>(
+	fs: AbstractFileSystem,
+	entries: Dict<EntryFile>,
+	macros: Dict<Macro<S>>,
+	sourceConverter: (sources: Dict<S>) => Dict<R>,
+	jsLifter: (path: string, content: string, type: '.js' | '.js.map' | '.d.ts') => R,
+	finalizer: (entryScripts: Set<string>, resources: Dict<R>) => Dict<string | Buffer>,
+): void {
+	const { entryScripts, unprocessedSources, transformedTsSources } = transform(fs, entries, macros)
+	emit(fs, entryScripts, unprocessedSources, transformedTsSources, sourceConverter, jsLifter, finalizer)
 }
 
 
