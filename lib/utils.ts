@@ -40,3 +40,25 @@ export abstract class AbstractFileSystem {
 	abstract basename(path: string): string
 	abstract relative(fromPath: string, toPath: string): string
 }
+
+// import * as nodepath from 'path'
+// class NodeMemoryFileSystem extends AbstractFileSystem {
+// 	protected files: Dict<string | Buffer> = {}
+
+// 	fileExists(path: string) { return path in this.files }
+
+// 	readFile(path: string): string | undefined
+// 	readFile(path: string, encoding: 'utf8'): string | undefined
+// 	readFile(path: string, encoding: string): Buffer | undefined
+// 	readFile(path: string, encoding = 'utf8') {
+// 		const file = this.files[path]
+// 		if (file === undefined) return undefined
+// 		if (typeof file === 'string')
+// 		if (encoding === undefined || encoding === 'utf8')
+// 	}
+
+// 	writeFile(path: string, content: string | Buffer) { this.files[path] = content }
+// 	dirname(path: string) { return nodepath.dirname(path) }
+// 	basename(path: string) { return nodepath.basename(path) }
+// 	relative(fromPath: string, toPath: string) { return nodepath.relative(fromPath, toPath) }
+// }

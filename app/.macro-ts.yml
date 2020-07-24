@@ -1,0 +1,5 @@
+macros: './.macros.ts'
+
+# other ideas
+# paths, for nicer resolutions
+# the various supported compiler options

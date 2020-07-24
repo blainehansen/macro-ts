@@ -1,6 +1,4 @@
 import ts = require('typescript')
-// import * as nodepath from 'path'
-
 import { Dict, AbstractFileSystem } from './utils'
 import { createTransformer, Macro, SourceChannel } from './transformer'
 
@@ -9,26 +7,6 @@ const alwaysOptions = {
 	module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs,
 }
 
-// class NodeMemoryFileSystem extends AbstractFileSystem {
-// 	protected files: Dict<string | Buffer> = {}
-
-// 	fileExists(path: string) { return path in this.files }
-
-// 	readFile(path: string): string | undefined
-// 	readFile(path: string, encoding: 'utf8'): string | undefined
-// 	readFile(path: string, encoding: string): Buffer | undefined
-// 	readFile(path: string, encoding = 'utf8') {
-// 		const file = this.files[path]
-// 		if (file === undefined) return undefined
-// 		if (typeof file === 'string')
-// 		if (encoding === undefined || encoding === 'utf8')
-// 	}
-
-// 	writeFile(path: string, content: string | Buffer) { this.files[path] = content }
-// 	dirname(path: string) { return nodepath.dirname(path) }
-// 	basename(path: string) { return nodepath.basename(path) }
-// 	relative(fromPath: string, toPath: string) { return nodepath.relative(fromPath, toPath) }
-// }
 
 export type EntryFile = { importer: string }
 
