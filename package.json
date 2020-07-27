@@ -9,7 +9,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "ts-node lib/transformer.ts",
+    "dev": "ts-node lib/cli.ts",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "test": "echo \"Error: no test specified\" && exit 1",

@@ -5,17 +5,21 @@ import ts = require('typescript')
 import * as c from '@ts-std/codec'
 import { Result, Ok, Err } from '@ts-std/monads'
 
-// import { transform } from './compiler'
+import { Dict } from './utils'
 import { createTransformer, Macro, SourceChannel } from './transformer'
 
 const alwaysOptions = {
-	strict: true, target: ts.ScriptTarget.ESNext,
-	module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs,
+	strict: true, moduleResolution: ts.ModuleResolutionKind.NodeJs,
+}
+const nonEmitOptions = {
+	...alwaysOptions,
+	noEmit: true, declaration: false, sourceMap: false,
 }
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
 
 const GlobalConfig = c.object({
-	macros: c.optional(c.string),
+	// macros: c.optional(c.string),
+	macros: c.string,
 })
 type GlobalConfig = c.TypeOf<typeof GlobalConfig>
 
@@ -25,80 +29,111 @@ function parseGlobalConfig(fileName: string) {
 		.try_change(obj => GlobalConfig.decode(obj))
 }
 
+function isNodeExported(node: ts.Node): boolean {
+	return (
+		(ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0
+		|| (!!node.parent && node.parent.kind === ts.SyntaxKind.SourceFile)
+	)
+}
+
 
 function check(entryFile: string) {
 	const workingDir = process.cwd()
-	console.log(workingDir)
-
-	// for now we know exactly where it is
 	const entryDir = nodepath.relative(workingDir, nodepath.dirname(entryFile))
-	console.log(entryDir)
 
 	const configPath = nodepath.join(entryDir, '.macro-ts.yml')
-	console.log(configPath)
 	const globalconfig = parseGlobalConfig(configPath).unwrap()
-	console.log(globalconfig)
+
+	const macrosOptions = {
+		...alwaysOptions, noEmit: false, noEmitOnError: true, declaration: false, sourceMap: false,
+		module: ts.ModuleKind.CommonJS, outDir: './target/.macros',
+	}
+	// TODO a good idea to add some hash/caching
+	const macrosEntry = nodepath.join(entryDir, globalconfig.macros)
+	const macrosSourceFile = ts.createSourceFile(macrosEntry, fs.readFileSync(macrosEntry, 'utf8'), ts.ScriptTarget.ESNext)
+	let foundMacros = false
+	const { transformed: [newMacrosSourceFile] } = ts.transform(macrosSourceFile, [() => sourceFile => {
+		// const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
+		// const ctx = { macros, sendSources, current: { workingDir, currentDir, currentFile }, readFile }
+		const finalStatements: ts.Statement[] = []
+		for (const statement of sourceFile.statements) {
+			if (!(
+				ts.isVariableStatement(statement)
+				&& isNodeExported(statement)
+				&& statement.declarationList.declarations.length === 1
+				&& ts.isIdentifier(statement.declarationList.declarations[0].name)
+				&& statement.declarationList.declarations[0].name.text === 'macros'
+			)) {
+				finalStatements.push(statement)
+				continue
+			}
+
+			foundMacros = true
+			finalStatements.push(ts.updateVariableStatement(
+				statement, statement.modifiers,
+				ts.updateVariableDeclarationList(
+					statement.declarationList, [ts.updateVariableDeclaration(
+						statement.declarationList.declarations[0],
+						statement.declarationList.declarations[0].name,
+						ts.createTypeReferenceNode(ts.createIdentifier('___Dict'), [
+							ts.createTypeReferenceNode(
+								ts.createIdentifier('___Macro'),
+								undefined,
+							),
+						]),
+						statement.declarationList.declarations[0].initializer,
+					)],
+				),
+			))
+		}
+
+		return ts.updateSourceFileNode(sourceFile, finalStatements)
+	}])
+	if (!foundMacros)
+		process.exit(1)
+	console.log(printer.printFile(newMacrosSourceFile))
+	// transformedTsSources[script.path] = printer.printFile(newMacrosSourceFile)
+
+	// const macrosProgram = ts.createProgram([], macrosOptions)
+	// const emitResult = macrosProgram.emit()
+	// const wereErrors = emitResult.emitSkipped
+	// if (wereErrors) {
+	// 	for (const diagnostic of emitResult.diagnostics)
+	// 		console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
+	// 	process.exit(1)
+	// }
+
+	// const macrosPath = nodepath.join(workingDir, './target/.macros/', entryDir, nodepath.basename(globalconfig.macros, '.ts'))
+	// const macros: Dict<Macro> = require(macrosPath).macros
+
 
 	// function dirMaker(sourceFileName: string) {
 	// 	const currentDir = nodepath.relative(workingDir, nodepath.dirname(sourceFileName))
 	// 	const currentFile = nodepath.basename(sourceFileName)
 	// 	return { currentDir, currentFile }
 	// }
-
+	// const transformedTsSources: Dict<string> = {}
 	// const receivePayload: SourceChannel<undefined> = script => {
-	// 	if (script) {
-	// 		const sourceFile = ts.createSourceFile(script.path, script.source, alwaysOptions.target)
-	// 		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-	// 		transformedTsSources[script.path] = printer.printFile(newSourceFile)
-	// 	}
-	// 	// addAllEntries(sources, unprocessedSources)
+	// 	if (!script) return
+	// 	const sourceFile = ts.createSourceFile(script.path, script.source, ts.ScriptTarget.ESNext)
+	// 	const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
+	// 	transformedTsSources[script.path] = printer.printFile(newSourceFile)
 	// }
-	// const transformer = createTransformer(macros, receivePayload, workingDir, fs, dirMaker)
-
-	// const entryScripts = new Set<string>()
-	// for (const [path, { importer }] of Object.entries(entries)) {
-	// 	if (importer === 'ts') {
-	// 		entryScripts.add(path)
-	// 		continue
-	// 	}
-
-	// 	const macro = macros[importer]
-	// 	if (macro === undefined || macro.type !== 'import') throw new Error()
-	// 	const source = fs.readFile(path)
-	// 	if (source === undefined) throw new Error()
-	// 	const { currentDir, currentFile } = dirMaker(path)
-	// 	const { sources, targetTs } = macro.macro({ workingDir, currentDir, currentFile }, path, source)
-	// 	const tsPath = path + '.ts'
-	// 	entryScripts.add(tsPath)
-	// 	receivePayload({ path: tsPath, source: targetTs }, sources)
-	// }
+	// const transformer = createTransformer(
+	// 	macros, receivePayload, workingDir,
+	// 	path => Result.attempt(() => fs.readFileSync(path, 'utf8')).ok_undef(),
+	// 	dirMaker,
+	// )
 
 
-	// const initialOptions = { ...alwaysOptions, noEmit: true, declaration: false, sourceMap: false }
-	// // TODO need to intervene in module resolution so this will discover any transformed entryScripts
-	// const initialProgram = ts.createProgram([...entryScripts], initialOptions)
-
+	// const initialProgram = ts.createProgram([entryFile], nonEmitOptions)
 	// for (const sourceFile of initialProgram.getSourceFiles()) {
 	// 	if (sourceFile.isDeclarationFile) continue
-	// 	// TODO probably check here that this isn't one of the entry files, it's already been transformed
-
 	// 	const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
 	// 	transformedTsSources[sourceFile.fileName] = printer.printFile(newSourceFile)
-	// 	// if (sourceFile.fileName !== 'app/App.ts') continue
-	// 	// console.log('sourceFile.fileName:', sourceFile.fileName)
-	// 	// console.log('transformedTsSources[sourceFile.fileName]')
-	// 	// console.log(transformedTsSources[sourceFile.fileName])
-	// 	// console.log()
 	// }
 
-	// const outputResources = sourceConverter(unprocessedSources)
-
-	// const transformedRoundOptions = {
-	// 	...alwaysOptions, declaration: false, sourceMap: false,
-	// 	// outDir: 'dist',
-	// 	// module: ts.ModuleKind.AMD, outFile: "./app/App.js",
-	// }
-	// const defaultCompilerHost = ts.createCompilerHost(transformedRoundOptions)
+	// const defaultCompilerHost = ts.createCompilerHost(nonEmitOptions)
 	// // https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API#customizing-module-resolution
 	// const capturingCompilerHost: ts.CompilerHost = {
 	// 	...defaultCompilerHost,
@@ -108,7 +143,7 @@ function check(entryFile: string) {
 	// 			console.log(fileName)
 	// 			console.log()
 	// 		}
-	// 		const transformedSource = transformedTsSources[fs.relative(process.cwd(), fileName)]
+	// 		const transformedSource = transformedTsSources[nodepath.relative(workingDir, fileName)]
 	// 		return transformedSource !== undefined
 	// 			? ts.createSourceFile(fileName, transformedSource, languageVersion)
 	// 			: defaultCompilerHost.getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
@@ -119,21 +154,7 @@ function check(entryFile: string) {
 	// 			console.log(fileName)
 	// 			console.log()
 	// 		}
-	// 		return fs.relative(process.cwd(), fileName) in transformedTsSources || defaultCompilerHost.fileExists(fileName)
-	// 	},
-	// 	writeFile(fileName, content) {
-	// 		console.log()
-	// 		console.log('writeFile')
-	// 		console.log(fileName)
-	// 		// console.log()
-	// 		// console.log(content)
-	// 		// console.log()
-	// 		outputResources[fileName] = jsLifter(
-	// 			fileName, content,
-	// 			fileName.endsWith('.d.ts') ? '.d.ts'
-	// 				: fileName.endsWith('.js.map') ? '.js.map'
-	// 				: '.js'
-	// 		)
+	// 		return nodepath.relative(workingDir, fileName) in transformedTsSources || defaultCompilerHost.fileExists(fileName)
 	// 	},
 	// 	// getDefaultLibFileName: () => "lib.d.ts",
 	// 	// getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
@@ -141,26 +162,19 @@ function check(entryFile: string) {
 	// 	// getCanonicalFileName: fileName => ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase(),
 	// 	// getNewLine: () => ts.sys.newLine,
 	// 	// useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-	// 	// fileExists,
 	// 	// readFile,
 	// 	// resolveModuleNames,
 	// }
-	// const transformedProgram = ts.createProgram([...entryScripts], transformedRoundOptions, capturingCompilerHost)
+	// const transformedProgram = ts.createProgram([entryFile], nonEmitOptions, capturingCompilerHost)
 	// const diagnostics = ts.getPreEmitDiagnostics(transformedProgram)
 	// // use diagnostic.category === ts.DiagnosticCategory.Error to see if any of these are actually severe
-	// // if (diagnostics.length)
-	// for (const diagnostic of diagnostics)
-	// 	console.log(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
-	// // const emitResult = transformedProgram.emit()
-	// transformedProgram.emit()
-
-
-	// // const exitCode = emitResult.emitSkipped ? 1 : 0
-	// // process.exit(exitCode)
-
-	// const outputFiles = finalizer(entryScripts, outputResources)
-	// for (const [path, content] of Object.entries(outputFiles))
-	// 	fs.writeFile(path, content)
+	// if (diagnostics.length) {
+	// 	for (const diagnostic of diagnostics)
+	// 		console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
+	// 	process.exit(1)
+	// }
 }
+
+// the check command should accept an optional file/directory, but by default look for src/_main.ts?
 
 check('./app/main.ts')

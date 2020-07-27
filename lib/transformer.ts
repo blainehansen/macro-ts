@@ -1,6 +1,16 @@
 import ts = require('typescript')
 import { Dict, PickVariants, AbstractFileSystem } from './utils'
 
+const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })
+function printNodes(nodes: ts.Node[]) {
+	const resultFile = ts.createSourceFile('', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS)
+	let printed = ''
+	for (const node of nodes)
+		printed += '\n' + printer.printNode(ts.EmitHint.Unspecified, node, resultFile)
+
+	return printed
+}
+
 export type Macro<S = undefined> =
 	| { type: 'block', macro: BlockMacro }
 	| { type: 'function', macro: FunctionMacro }
@@ -13,18 +23,18 @@ type CompileContext<S> = {
 	sendSources: SourceChannel<S>,
 	current: FileContext,
 	// TODO I'm not sure this is the right idea. we have to assume what path they'll be reading from
-	fs: AbstractFileSystem,
+	readFile: (path: string) => string | undefined,
 }
 export function createTransformer<S>(
 	macros: Dict<Macro<S>>,
 	sendSources: SourceChannel<S>,
 	workingDir: string,
-	fs: AbstractFileSystem,
+	readFile: (path: string) => string | undefined,
 	dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
 ): ts.TransformerFactory<ts.SourceFile> {
 	return context => sourceFile => {
 		const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
-		const ctx = { macros, sendSources, current: { workingDir, currentDir, currentFile }, fs }
+		const ctx = { macros, sendSources, current: { workingDir, currentDir, currentFile }, readFile }
 		return ts.updateSourceFileNode(sourceFile, flatVisitStatements(ctx, sourceFile.statements, context))
 	}
 }
@@ -101,8 +111,8 @@ export type ImportMacro<S> = (
 	targetPath: string,
 	targetSource: string,
 ) => {
-	targetTs: string,
-	sources: Dict<S>,
+	statements: ts.Statement[],
+	sources?: Dict<S>,
 }
 export type ImportMacroReturn<S> = ReturnType<ImportMacro<S>>
 export function ImportMacro<S>(macro: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
@@ -110,7 +120,7 @@ export function ImportMacro<S>(macro: ImportMacro<S>): PickVariants<Macro<S>, 't
 }
 
 function attemptImportMacro<S>(
-	{ macros, current, sendSources, fs }: CompileContext<S>,
+	{ macros, current, sendSources, readFile }: CompileContext<S>,
 	declaration: ts.ImportDeclaration | ts.ExportDeclaration,
 ): ts.StringLiteral | undefined {
 	const moduleSpecifier = declaration.moduleSpecifier
@@ -133,12 +143,12 @@ function attemptImportMacro<S>(
 	if (!macro || macro.type !== 'import') throw new Error()
 
 	const path = pathSpecifier.text
-	const source = fs.readFile(path)
+	const source = readFile(path)
 	if (source === undefined) throw new Error()
 
-	const { sources, targetTs  } = macro.macro(current, path, source)
+	const { sources = {}, statements  } = macro.macro(current, path, source)
 	const tsPath = path + '.ts'
-	sendSources({ path: tsPath, source: targetTs }, sources)
+	sendSources({ path: tsPath, source: printNodes(statements) }, sources)
 
 	return ts.createStringLiteral(path)
 }
@@ -437,13 +447,3 @@ function flatVisitStatements<S>(
 
 	return ts.createNodeArray(finalStatements)
 }
-
-// const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })
-// function _printNodes(nodes: ts.Node[]) {
-// 	const resultFile = ts.createSourceFile('', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS)
-// 	let printed = ''
-// 	for (const node of nodes)
-// 		printed += '\n' + printer.printNode(ts.EmitHint.Unspecified, node, resultFile)
-
-// 	return printed
-// }
