@@ -1,9 +1,7 @@
 import ts = require('typescript')
+import { BlockMacro, FunctionMacro, ImportMacro } from '../lib/transformer'
 
-import { Dict } from '../lib/utils'
-import { Macro, BlockMacro, FunctionMacro, ImportMacro } from '../lib/transformer'
-
-export const macros: Dict<Macro> = {
+export const macros = {
 	die: FunctionMacro(args => {
 		if (args.length !== 1) throw new Error()
 		const target = args[0]
@@ -17,20 +15,28 @@ export const macros: Dict<Macro> = {
 		}
 	}),
 
-	t: FunctionMacro(args => {
+	u: FunctionMacro(args => {
 		if (args.length !== 1) throw new Error()
 		const target = args[0]
 		return {
 			prepend: [ts.createIf(
 				ts.createBinary(target, ts.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken), ts.createIdentifier('undefined')),
-				// ts.createCall(
-				// 	ts.createPropertyAccess(target, ts.createIdentifier('is_err')),
-				// 	undefined, [],
-				// ),
 				ts.createReturn(ts.createIdentifier('undefined')), undefined,
 			)],
-			// expression: ts.createPropertyAccess(target, ts.createIdentifier('value')),
 			expression: target,
+			append: [],
+		}
+	}),
+
+	t: FunctionMacro(args => {
+		if (args.length !== 1) throw new Error()
+		const target = args[0]
+		return {
+			prepend: [ts.createIf(
+				ts.createCall(ts.createPropertyAccess(target, ts.createIdentifier('is_err')), undefined, []),
+				ts.createReturn(target), undefined,
+			)],
+			expression: ts.createPropertyAccess(target, ts.createIdentifier('value')),
 			append: [],
 		}
 	}),

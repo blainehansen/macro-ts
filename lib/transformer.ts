@@ -12,9 +12,9 @@ function printNodes(nodes: ts.Node[]) {
 }
 
 export type Macro<S = undefined> =
-	| { type: 'block', macro: BlockMacro }
-	| { type: 'function', macro: FunctionMacro }
-	| { type: 'import', macro: ImportMacro<S> }
+	| { type: 'block', execute: BlockMacro }
+	| { type: 'function', execute: FunctionMacro }
+	| { type: 'import', execute: ImportMacro<S> }
 
 export type SourceChannel<S> = (targetTs: { path: string, source: string }, sources: Dict<S>) => void
 
@@ -42,8 +42,8 @@ export function createTransformer<S>(
 
 export type BlockMacro = (args: ts.NodeArray<ts.Statement>) => ts.Statement[]
 export type BlockMacroReturn = ReturnType<BlockMacro>
-export function BlockMacro(macro: BlockMacro): PickVariants<Macro, 'type', 'block'> {
-	return { type: 'block', macro }
+export function BlockMacro(execute: BlockMacro): PickVariants<Macro, 'type', 'block'> {
+	return { type: 'block', execute }
 }
 
 // TODO at some point these will all return Result
@@ -68,7 +68,7 @@ function attemptBlockMacro<S>(
 	const macro = ctx.macros[statement.expression.expression.expression.text]
 	if (!macro || macro.type !== 'block') throw new Error()
 
-	return macro.macro(flatVisitStatements(ctx, block.statements, context))
+	return macro.execute(flatVisitStatements(ctx, block.statements, context))
 }
 
 
@@ -78,8 +78,8 @@ export type FunctionMacro = (args: ts.NodeArray<ts.Expression>, typeArgs: ts.Nod
 	append?: ts.Statement[],
 }
 export type FunctionMacroReturn = ReturnType<FunctionMacro>
-export function FunctionMacro(macro: FunctionMacro): PickVariants<Macro, 'type', 'function'> {
-	return { type: 'function', macro }
+export function FunctionMacro(execute: FunctionMacro): PickVariants<Macro, 'type', 'function'> {
+	return { type: 'function', execute }
 }
 
 function attemptFunctionMacro<S>(
@@ -97,7 +97,7 @@ function attemptFunctionMacro<S>(
 
 	const macro = ctx.macros[node.expression.expression.expression.text]
 	if (!macro || macro.type !== 'function') throw new Error()
-	return macro.macro(argumentsVisitor(node.arguments), node.typeArguments)
+	return macro.execute(argumentsVisitor(node.arguments), node.typeArguments)
 }
 
 
@@ -115,8 +115,8 @@ export type ImportMacro<S> = (
 	sources?: Dict<S>,
 }
 export type ImportMacroReturn<S> = ReturnType<ImportMacro<S>>
-export function ImportMacro<S>(macro: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
-	return { type: 'import', macro }
+export function ImportMacro<S>(execute: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
+	return { type: 'import', execute }
 }
 
 function attemptImportMacro<S>(
@@ -146,9 +146,8 @@ function attemptImportMacro<S>(
 	const source = readFile(path)
 	if (source === undefined) throw new Error()
 
-	const { sources = {}, statements  } = macro.macro(current, path, source)
-	const tsPath = path + '.ts'
-	sendSources({ path: tsPath, source: printNodes(statements) }, sources)
+	const { sources = {}, statements  } = macro.execute(current, path, source)
+	sendSources({ path: path + '.ts', source: printNodes(statements) }, sources)
 
 	return ts.createStringLiteral(path)
 }
