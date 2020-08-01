@@ -1,5 +1,5 @@
 import ts = require('typescript')
-import { Dict, PickVariants, AbstractFileSystem } from './utils'
+import { Dict, PickVariants } from './utils'
 
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })
 function printNodes(nodes: ts.Node[]) {

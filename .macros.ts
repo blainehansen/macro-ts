@@ -1,5 +1,5 @@
 import ts = require('typescript')
-import { BlockMacro, FunctionMacro, ImportMacro } from '../lib/transformer'
+import { BlockMacro, FunctionMacro, ImportMacro } from './lib/transformer'
 
 export const macros = {
 	die: FunctionMacro(args => {

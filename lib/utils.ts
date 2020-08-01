@@ -1,4 +1,10 @@
 export type Dict<T> = { [key: string]: T }
+export function tuple<L extends any[]>(...items: L) {
+	return items
+}
+export function exec<T>(fn: () => T): T {
+	return fn()
+}
 
 export type UnionKeys<T> = T extends T ? keyof T : never
 export type OmitVariants<U, K extends UnionKeys<U>, V extends U[K]> = U extends U
