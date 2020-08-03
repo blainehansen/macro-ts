@@ -1,5 +1,0 @@
-macros: './.macros.ts'
-
-packages:
-- include: 'app/main.ts'
-- include: 'lib/**/*.ts'

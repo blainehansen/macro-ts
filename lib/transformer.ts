@@ -14,6 +14,7 @@ function printNodes(nodes: ts.Node[]) {
 export type Macro<S = undefined> =
 	| { type: 'block', execute: BlockMacro }
 	| { type: 'function', execute: FunctionMacro }
+	| { type: 'decorator', execute: DecoratorMacro }
 	| { type: 'import', execute: ImportMacro<S> }
 
 export type SourceChannel<S> = (targetTs: { path: string, source: string }, sources: Dict<S>) => void
@@ -98,6 +99,27 @@ function attemptFunctionMacro<S>(
 	const macro = ctx.macros[node.expression.expression.expression.text]
 	if (!macro || macro.type !== 'function') throw new Error()
 	return macro.execute(argumentsVisitor(node.arguments), node.typeArguments)
+}
+
+
+export type DecoratorMacro = (
+	statement: ts.Statement,
+	args: ts.NodeArray<ts.Expression> | undefined,
+	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
+) => {
+	original?: ts.Statement,
+	additional?: ts.Statement[],
+}
+export type DecoratorMacroReturn = ReturnType<DecoratorMacro>
+export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'type', 'decorator'> {
+	return { type: 'decorator', execute }
+}
+
+function attemptDecoratorMacro(
+	ctx: CompileContext,
+	statement: ts.Statement,
+): DecoratorMacroReturn | undefined {
+	//
 }
 
 
@@ -352,6 +374,25 @@ function attemptVisitStatement<S>(
 			statement.modifiers, statement.name, statement.typeParameters, statement.heritageClauses,
 			statement.members.map(visitNodeSubsuming),
 		))
+
+	// for decorators
+	// FunctionDeclaration
+	// ClassDeclaration
+	// InterfaceDeclaration
+	// TypeAliasDeclaration
+	// EnumDeclaration
+	// ModuleDeclaration
+	// VariableStatement
+	// ImportEqualsDeclaration
+	// ImportDeclaration
+	// ExportAssignment
+	// ExportDeclaration
+
+	// ParameterDeclaration
+	// SetAccessorDeclaration
+	// GetAccessorDeclaration
+	// ConstructorDeclaration
+	// IndexSignatureDeclaration
 
 	else if (ts.isWithStatement(statement))
 		return include(ts.updateWith(

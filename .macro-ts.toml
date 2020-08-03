@@ -1,0 +1,13 @@
+macros = '.macros.ts'
+
+[[packages]]
+include = 'app/main.ts'
+environment = 'anywhere'
+
+[[packages]]
+include = 'bin/*.ts'
+environment = 'node'
+
+[[packages]]
+include = 'lib/**/*.ts'
+environment = 'anywhere'
