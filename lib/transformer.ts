@@ -1,4 +1,4 @@
-import ts = require('typescript')
+import * as ts from 'typescript'
 import { Dict, PickVariants } from './utils'
 
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, omitTrailingSemicolon: true })

@@ -1,3 +1,6 @@
+import * as c from '@ts-std/codec'
+import { Result as _Result, Ok, Err } from '@ts-std/monads'
+
 export type Dict<T> = { [key: string]: T }
 export function tuple<L extends any[]>(...items: L) {
 	return items
@@ -30,6 +33,29 @@ export class Registry<T> {
 }
 
 export type NonEmpty<T> = [T, ...T[]]
+export namespace NonEmpty {
+	export function decoder<T>(decoder: c.Decoder<T>): c.Decoder<NonEmpty<T>> {
+		const arrayDecoder = c.array(decoder)
+		return c.wrap(`NonEmpty<${decoder.name}>`, input => {
+			const result = arrayDecoder.decode(input)
+			if (result.is_err()) return result
+			const values = result.value
+			if (values.length === 0) return Err(`array empty, expected at least one item`)
+			return Ok([values[0], ...values.slice(1)])
+		})
+	}
+
+	export function flattenInto<T>(item: T | NonEmpty<T>): NonEmpty<T> {
+		return Array.isArray(item) ? item : [item]
+	}
+}
+
+export type NonEmptyOrSingle<T> = T | NonEmpty<T>
+export namespace NonEmptyOrSingle {
+	export function decoder<T>(decoder: c.Decoder<T>): c.Decoder<NonEmptyOrSingle<T>> {
+		return c.union(decoder, NonEmpty.decoder(decoder))
+	}
+}
 
 // export abstract class AbstractFileSystem {
 // 	// abstract fileExists(path: string): Promise<boolean>

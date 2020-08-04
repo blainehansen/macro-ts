@@ -1,26 +1,38 @@
-#!/usr/bin/env node
+// TODO put #!/usr/bin/env node back onto bin scripts
+// https://stackoverflow.com/questions/10587615/unix-command-to-prepend-text-to-a-file
 
 import * as fs from 'fs'
 import arg = require('arg')
 import * as nodepath from 'path'
-import toml = require('@iarna/toml')
 import ts = require('typescript')
-import * as c from '@ts-std/codec'
+import toml = require('@iarna/toml')
+import { Result } from '@ts-std/monads'
 import { sync as globSync } from 'fast-glob'
-import { Result, Ok, Err } from '@ts-std/monads'
 import sourceMapSupport = require('source-map-support')
 
 import { Dict, tuple as t, exec, NonEmpty } from '../lib/utils'
 import { createTransformer, Macro, SourceChannel } from '../lib/transformer'
+import { MacroTsConfig, CompilationEnvironment, ScriptTarget } from '../lib/config'
+
+function fatal(message: string): never {
+	console.error(message)
+	return process.exit(1)
+}
+function exit(message: string): never {
+	console.log(message)
+	return process.exit(0)
+}
+
 
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
 
-function glob(patterns: string[]) {
-	return globSync(patterns, { dot: true })
+function glob(patterns: string[], ignore: string[]) {
+	return globSync(patterns, { dot: true, ignore })
 }
 
 function undefReadFile(path: string) {
-	return Result.attempt(() => fs.readFileSync(path, 'utf8')).ok_undef()
+	try { return fs.readFileSync(path, 'utf8') }
+	catch { return undefined }
 }
 
 function isNodeExported(node: ts.Node): boolean {
@@ -60,97 +72,7 @@ function createInterceptingHost(
 
 // https://css-tricks.com/polyfill-javascript-need/
 
-// we have an option of doing virtual paths intelligently
-
-type ScriptTarget = Exclude<ts.ScriptTarget, ts.ScriptTarget.JSON>
-const ScriptTarget = c.wrap<ScriptTarget>('ScriptTarget', input => {
-	if (typeof input !== 'string') return Err(`invalid target: ${input}`)
-	if (input.toLowerCase() === 'json') return Err(`the JSON target isn't supported`)
-	if (input in ts.ScriptTarget)
-		return Ok(ts.ScriptTarget[input as keyof typeof ts.ScriptTarget] as ScriptTarget)
-	return Err(`invalid target: ${input}`)
-})
-
-type CompilationEnvironment = {
-	platform: 'browser' | 'node' | 'anywhere',
-	target: ScriptTarget,
-}
-namespace CompilationEnvironment {
-	const fullDecoder = c.object<CompilationEnvironment>({
-		platform: c.literals('browser', 'node', 'anywhere'),
-		target: ScriptTarget,
-	})
-
-	export const decoder = c.wrap('CompilationEnvironment', env => {
-		if (typeof env !== 'string')
-			return fullDecoder.decode(env)
-
-		switch (env) {
-			case 'legacybrowser':
-				return Ok({ platform: 'browser', target: ts.ScriptTarget.ES5 })
-			case 'modernbrowser':
-				return Ok({ platform: 'browser', target: ts.ScriptTarget.Latest })
-			case 'node':
-				return Ok({ platform: 'node', target: ts.ScriptTarget.Latest })
-			case 'anywhere':
-				return Ok({ platform: 'anywhere', target: ts.ScriptTarget.Latest })
-		}
-		return Err(`invalid environment shorthand: ${env}`)
-	})
-
-	// https://www.typescriptlang.org/docs/handbook/tsconfig-json.html#types-typeroots-and-types
-	export function options({ platform, target }: CompilationEnvironment) {
-		switch (platform) {
-			case 'node':
-				return {}
-			case 'anywhere':
-				return { types: [], lib: [] }
-			case 'browser':
-				const opt = { types: [], lib: ['dom'] }
-				if (target >= ts.ScriptTarget.ES2015)
-					opt.lib.push('webworker')
-				return opt
-		}
-	}
-}
-
-
-// this means that they can have just a single thing to worry about, the environment they're compiling to
-// if we make the reasonable assumption that if this is intended to be a browser *application*,
-// that they'll be using a bundler that expects all code to be in esmodule style
-// then we don't have to care about either the module options or the outDir/outFile options, we can just use target/.dist
-// anyone wanting to build something more specific can just leverage the raw machinery in this package
-
-function NonEmptyDecoder<T>(decoder: c.Decoder<T>): c.Decoder<[T, ...T[]]> {
-	const arrayDecoder = c.array(decoder)
-	return c.wrap(`NonEmpty<${decoder.name}>`, input => {
-		const result = arrayDecoder.decode(input)
-		if (result.is_err()) return result
-		const values = result.value
-		if (values.length === 0) return Err(`array empty, expected at least one item`)
-		return Ok([values[0], ...values.slice(1)])
-	})
-}
-function flattenNonEmpty<T>(item: T | NonEmpty<T>): NonEmpty<T> {
-	return Array.isArray(item) ? item : [item]
-}
-
-const MacroTsConfig = c.object({
-	macros: c.optional(c.string),
-	packages: c.array(c.object({
-		location: c.string,
-		entry: c.union(c.string, NonEmptyDecoder(c.string)),
-		environments: c.union(CompilationEnvironment.decoder, NonEmptyDecoder(CompilationEnvironment.decoder)),
-		dev: c.optional(c.boolean),
-	})),
-})
-type MacroTsConfig = c.TypeOf<typeof MacroTsConfig>
-
-function parseMacroTsConfig(fileName: string) {
-	return Result.attempt(() => toml.parse(fs.readFileSync(fileName, 'utf8')))
-		.change_err(error => error.message)
-		.try_change(obj => MacroTsConfig.decode(obj))
-}
+// TODO we have an option of doing virtual paths intelligently
 
 const alwaysOptions = {
 	strict: true, moduleResolution: ts.ModuleResolutionKind.NodeJs,
@@ -179,43 +101,60 @@ export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.D
 }
 
 
-// type EmitOptions = {}
-type EmitOptions = true
-const defaultMacrosEntry = './.macros.ts'
-
 type CompileArgs = {
 	entryFiles: string[],
-	emitOptions?: {
-		target: ScriptTarget,
-		lib?: string[],
-		types?: string[],
-	},
+	// emitOptions: {}[],
+	outDir: string,
+	platform: CompilationEnvironment['platform'],
+	target: ScriptTarget,
+	lib?: string[],
+	types?: string[],
 }
 
-function produceConfig(entryGlob: string | undefined, workingDir: string) {
-	const configPath = nodepath.join(workingDir, './.macro-ts.toml')
-	// const configText = undefReadFile(configPath)
-	// if (configText) {
-	// 	//
-	// }
-	const configResult = parseMacroTsConfig(configPath)
+export const configLocation = './.macro-ts.toml'
+export const defaultMacrosEntry = './.macros.ts'
 
-	const [macrosEntry, entryFiles] = entryGlob !== undefined
-		? [configResult.change(c => c.macros || defaultMacrosEntry).default(defaultMacrosEntry), glob([entryGlob])]
-		: (() => {
-			const { macros, packages } = configResult.unwrap()
-			// TODO this isn't right
-			// each of these projects could potentially have different environments etc.
-			// so we need to go over each of these separately
-			// the entire config parsing stage should probably be moved up a level,
-			// and this function should take more precise inputs
+export function produceConfig(entryGlob: string | undefined, workingDir: string) {
+	const configPath = nodepath.join(workingDir, configLocation)
+	const configText = undefReadFile(configPath)
+
+	// if an entryGlob is given, then we don't need to find a file
+	const configResult = configText !== undefined
+		? Result.attempt(() => toml.parse(configText))
+			.change_err(e => e.message)
+			.try_change(obj => MacroTsConfig.decode(obj))
+		: undefined
+
+	const [macrosEntry, compileArgsList] = entryGlob !== undefined
+		? exec(() => {
+			const entryFiles = glob([entryGlob], [])
+			const compileArgs: CompileArgs[] = [{ entryFiles, outDir: '.', platform: 'anywhere', target: ts.ScriptTarget.Latest }]
+
+			if (configResult !== undefined) {
+				const { macros } = MacroTsConfig.expect(configResult)
+				return t(macros || defaultMacrosEntry, compileArgs)
+			}
+
+			return t(defaultMacrosEntry, compileArgs)
+		})
+		: exec(() => {
+			const { macros, packages } = MacroTsConfig.expect(configResult)
 			return t(
 				macros || defaultMacrosEntry,
-				packages.flatMap(({ location, entry }) => glob(flattenNonEmpty(entry).map(e => nodepath.join(location, e)))),
+				packages.map(({ location, entry, exclude, environment }) => {
+					const entries = NonEmpty.flattenInto(entry).map(e => nodepath.join(location, e))
+					const excludes = exclude ? NonEmpty.flattenInto(exclude) : []
+					return {
+						entryFiles: glob(entries, excludes),
+						outDir: location,
+						...environment,
+						...CompilationEnvironment.options(environment),
+					}
+				}),
 			)
-		})()
+		})
 
-	return { macrosEntry, entryFiles }
+	return { macrosEntry, compileArgsList }
 }
 
 export function produceTransformer(macrosEntry: string, workingDir: string) {
@@ -300,44 +239,52 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 	return { transformer, transformedTsSources }
 }
 
-export function compile(entryGlob: string | undefined, devMode: boolean, emitOptions: EmitOptions | undefined) {
+
+export function compile(entryGlob: string | undefined, devMode: boolean, shouldEmit: boolean) {
 	const workingDir = process.cwd()
-	const { macrosEntry, entryFiles } = produceConfig(entryGlob, workingDir)
+	const { macrosEntry, compileArgsList } = produceConfig(entryGlob, workingDir)
 	const { transformer, transformedTsSources } = produceTransformer(macrosEntry, workingDir)
 
-	const initialProgram = ts.createProgram(entryFiles, nonEmitOptions)
-	for (const sourceFile of initialProgram.getSourceFiles()) {
-		if (sourceFile.isDeclarationFile) continue
-		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-		transformedTsSources.set(sourceFile.fileName, printer.printFile(newSourceFile))
-	}
-
 	const emitDirectory = './target/.dist'
-	const compileOptions = {
-		...alwaysOptions, ...makeDevModeOptions(devMode),
-		...(
-			emitOptions === undefined
-				? nonEmitOptions
-				: { outDir: emitDirectory, ...alwaysEmitOptions }
-		),
+	if (shouldEmit)
+		fs.rmdirSync(emitDirectory, { recursive: true })
+
+	for (const { entryFiles, outDir, platform, target, module, lib, types } of compileArgsList) {
+		console.log('checking:', outDir, '; files:', entryFiles)
+		transformedTsSources.clear()
+
+		const initialProgram = ts.createProgram(entryFiles, nonEmitOptions)
+		for (const sourceFile of initialProgram.getSourceFiles()) {
+			if (sourceFile.isDeclarationFile) continue
+			const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
+			transformedTsSources.set(sourceFile.fileName, printer.printFile(newSourceFile))
+		}
+
+		const compileOptions = {
+			...alwaysOptions, ...makeDevModeOptions(devMode),
+			...(
+				shouldEmit
+					? { ...alwaysEmitOptions, outDir: nodepath.join(emitDirectory, outDir), target, module, lib, types }
+					: nonEmitOptions
+			),
+		}
+		const capturingCompilerHost = createInterceptingHost(workingDir, transformedTsSources, compileOptions)
+		const transformedProgram = ts.createProgram(entryFiles, compileOptions, capturingCompilerHost)
+
+		const diagnostics = shouldEmit
+			? transformedProgram.emit().diagnostics
+			: ts.getPreEmitDiagnostics(transformedProgram)
+
+		if (diagnostics.length) {
+			console.error(`while compiling ${outDir} for platform ${platform} and target ${ts.ScriptTarget[target]}:`)
+			reportDiagnostics(workingDir, diagnostics)
+		}
+		console.log('no errors!\n')
 	}
-	const capturingCompilerHost = createInterceptingHost(workingDir, transformedTsSources, compileOptions)
-	const transformedProgram = ts.createProgram(entryFiles, compileOptions, capturingCompilerHost)
-
-	const diagnostics = emitOptions === undefined
-		? ts.getPreEmitDiagnostics(transformedProgram)
-		: exec(() => {
-			fs.rmdirSync(emitDirectory, { recursive: true })
-			return transformedProgram.emit().diagnostics
-		})
-
-	// TODO use diagnostic.category === ts.DiagnosticCategory.Error to see if any of these are actually severe
-	if (diagnostics.length)
-		reportDiagnostics(workingDir, diagnostics)
 }
 
 function check(entryGlob: string | undefined, devMode: boolean) {
-	compile(entryGlob, devMode, undefined)
+	compile(entryGlob, devMode, false)
 }
 function build(entryGlob: string | undefined, devMode: boolean) {
 	compile(entryGlob, devMode, true)
@@ -369,7 +316,7 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		// getProjectVersion: () => String(projectVersion),
 		// getScriptFileNames: () => Array.from(fileVersions.keys()),
 		getScriptFileNames: () => [entryFile],
-		getScriptVersion: (fileName: string) => {
+		getScriptVersion(_fileName: string) {
 			// const version = fileVersions.get(fileName)
 			// return version ? version.toString() : ''
 			return '1'
@@ -419,7 +366,7 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		},
 	})
 
-	function compileWithService(code: string, fileName: string){
+	function compileWithService(_code: string, fileName: string){
 		// updateMemoryCache(code, fileName)
 
 		const output = service.getEmitOutput(fileName)
@@ -477,15 +424,6 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 	Module.runMain()
 }
 
-
-function fatal(message: string): never {
-	console.error(message)
-	return process.exit(1)
-}
-function exit(message: string): never {
-	console.log(message)
-	return process.exit(0)
-}
 
 export function main(argv: string[]) {
 	const {

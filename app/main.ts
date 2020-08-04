@@ -11,3 +11,5 @@ function yo() {
 }
 
 yo_yo()
+
+document.body

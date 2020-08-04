@@ -20,11 +20,12 @@ npx macro-ts check 'someDir/**/*.ts'
 npx macro-ts build 'someDir/**/*.ts'
 ```
 
-When you want to create a proper project, create a `.macro-ts.toml` file to hold project configuration specific to `macro-ts`.
+When you want to create a proper project, create a `.macro-ts.toml` file to hold configuration specific to `macro-ts`.
 
 ```toml
 # points to the file
 # where your macros are defined
+# this is the default
 macros = '.macros.ts'
 
 # entry globs and compilation environments
@@ -32,44 +33,45 @@ macros = '.macros.ts'
 [[packages]]
 location = 'app'
 entry = 'main.ts'
-environments = ['modernbrowser', 'legacybrowser']
+environment = 'modernbrowser'
 
 [[packages]]
 location = 'bin'
-entry = *.ts
-environments = ['node']
+entry = '*.ts'
+environment = 'node'
 
 [[packages]]
 location = 'lib'
-# macro-ts uses the fast-glob npm package for globbing
-# so negative/excluding globs are supported
-entry = ['**/*.ts', '!*.test.ts']
-environments = ['anywhere', { platform: 'anywhere', target: 'ES5' }]
+entry = '**/*.ts'
+exclude = '**/*.test.ts'
+environment = 'anywhere'
 ```
 
 
 ## Compilation environments
 
-In the javascript world, we almost always write code with one of these intended execution environments:
+In the javascript world, we almost always write code with one of these intended execution environments, which effects what ambient libraries typescript should include:
 
-- `node`: needs access to the various node libraries and globals.
 - `browser`: needs access to the various dom libraries and globals.
+- `webworker`: needs access to the various webworker libraries and globals.
+- `node`: needs access to the various node libraries and globals.
 - `anywhere`: shouldn't assume the existence of *any* special libraries or globals.
 
 Typescript has ways of including different type libraries for node and the browser, but they're a little clunky and inexact. `macro-ts` introduces the concept of compilation environments that allow you to easily choose the ambient types that should be available, as well as the typescript `target`.
 
-There are four environment shorthands, which expand to an object of this type:
+There are five environment shorthands, which expand to an object of this type:
 
 ```ts
 import ts = require('typescript')
 type CompilationEnvironment = {
-  platform: 'node' | 'browser' | 'anywhere',
+  platform: 'browser' | 'webworker' | 'node' | 'anywhere',
   target: ts.ScriptTarget,
 };
 ```
 
 - `legacybrowser`: `{ platform: 'browser', target: ts.ScriptTarget.ES5 }`
 - `modernbrowser`: `{ platform: 'browser', target: ts.ScriptTarget.Latest }`
+- `webworker`: `{ platform: 'webworker', target: ts.ScriptTarget.Latest }`
 - `node`: `{ platform: 'node', target: ts.ScriptTarget.Latest }`
 - `anywhere`: `{ platform: 'anywhere', target: ts.ScriptTarget.Latest }`
 
@@ -221,6 +223,37 @@ An import statement can use this form `import * as t from macroName!!('./some/pa
 
 This system is generic over some type (`S`) for additional sources to be produced and processed along with the typescript, so it's possible to use import macros as the basis of a robust and typesafe bundling system.
 
+Let's imagine you had this yaml file describing some data:
+
+```yaml
+# obj.yaml
+a: 'a'
+b: 1
+```
+
+You could create a `yaml` macro to load it at compile time, perhaps expanding it to this "virtual" typescript:
+
+```ts
+// "virtual" obj.yaml.ts
+export default {
+  a: 'a',
+  b: 1,
+}
+```
+
+And then you can consume it in a typesafe way:
+
+```ts
+// main.ts
+import obj from yaml!!('./obj.yaml')
+obj.a.toLowerCase()
+obj.b.toFixed()
+obj.c // compiler error!
+```
+
+The possibilities are endless.
+
+
 Type signature:
 
 ```ts
@@ -273,3 +306,8 @@ However if you instead mostly use the terminal, this problem is just an inconven
 **Pull requests are welcome!**
 
 I don't know much about sourcemaps, and nice sourcemaps are less important to me than expressive and safe code, so I haven't prioritized this work. But I won't turn down reasonable pull requests to solve this problem.
+
+
+## Roadmap
+
+[ ] - Improve performance through caching, both of file data and build outputs.

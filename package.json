@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "ts-node lib/cli.ts",
     "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build:bin": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "test": "echo \"Error: no test specified\" && exit 1",
     "ts:ast": "ts-creator lab/_generate.from.ts --use-tabs true --trailing-comma 'all' -o lab/_generate.to.ts"

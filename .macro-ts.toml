@@ -2,15 +2,16 @@ macros = '.macros.ts'
 
 [[packages]]
 location = 'app'
-entry = ['main.ts']
-environments = ['anywhere']
+entry = 'main.ts'
+environment = 'modernbrowser'
 
 [[packages]]
 location = 'bin'
-entry =[ '*.ts']
-environments = ['node']
+entry = '*.ts'
+environment = 'node'
 
 [[packages]]
 location = 'lib'
-entry = ['**/*.ts']
-environments = ['anywhere']
+entry = '**/*.ts'
+exclude = '**/*.test.ts'
+environment = 'anywhere'

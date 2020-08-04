@@ -6,10 +6,11 @@
 		"target": "esnext",
 		"module": "none",
 		"moduleResolution": "node",
-		"outDir": "dist"
+		"outDir": "dist",
+		"lib": ["esnext", "esnext.intl"]
 	},
 	"include": [
-		"lib/**/*"
+		"bin/**/*"
 	],
 	"exclude": [
 		"node_modules",
