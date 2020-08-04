@@ -29,23 +29,25 @@ export class Registry<T> {
 	}
 }
 
-export abstract class AbstractFileSystem {
-	// abstract fileExists(path: string): Promise<boolean>
-	abstract fileExists(path: string): boolean
-	// abstract readFile(path: string): Promise<string | undefined>
-	abstract readFile(path: string): string | undefined
-	// abstract readFile(path: string, utf: true): Promise<string | undefined>
-	abstract readFile(path: string, utf: true): string | undefined
-	// abstract readFile(path: string, utf: false): Promise<Buffer | undefined>
-	abstract readFile(path: string, utf: false): Buffer | undefined
-	// abstract writeFile(path: string, content: string | Buffer): Promise<void>
-	abstract writeFile(path: string, content: string | Buffer): void
+export type NonEmpty<T> = [T, ...T[]]
 
-	abstract getWorkingDirectory(): string
-	abstract dirname(path: string): string
-	abstract basename(path: string): string
-	abstract relative(fromPath: string, toPath: string): string
-}
+// export abstract class AbstractFileSystem {
+// 	// abstract fileExists(path: string): Promise<boolean>
+// 	abstract fileExists(path: string): boolean
+// 	// abstract readFile(path: string): Promise<string | undefined>
+// 	abstract readFile(path: string): string | undefined
+// 	// abstract readFile(path: string, utf: true): Promise<string | undefined>
+// 	abstract readFile(path: string, utf: true): string | undefined
+// 	// abstract readFile(path: string, utf: false): Promise<Buffer | undefined>
+// 	abstract readFile(path: string, utf: false): Buffer | undefined
+// 	// abstract writeFile(path: string, content: string | Buffer): Promise<void>
+// 	abstract writeFile(path: string, content: string | Buffer): void
+
+// 	abstract getWorkingDirectory(): string
+// 	abstract dirname(path: string): string
+// 	abstract basename(path: string): string
+// 	abstract relative(fromPath: string, toPath: string): string
+// }
 
 // import * as nodepath from 'path'
 // class NodeMemoryFileSystem extends AbstractFileSystem {

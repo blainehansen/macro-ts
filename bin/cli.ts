@@ -6,14 +6,18 @@ import * as nodepath from 'path'
 import toml = require('@iarna/toml')
 import ts = require('typescript')
 import * as c from '@ts-std/codec'
-import { sync as globSync } from 'glob'
+import { sync as globSync } from 'fast-glob'
 import { Result, Ok, Err } from '@ts-std/monads'
 import sourceMapSupport = require('source-map-support')
 
-import { Dict, tuple as t, exec } from '../lib/utils'
+import { Dict, tuple as t, exec, NonEmpty } from '../lib/utils'
 import { createTransformer, Macro, SourceChannel } from '../lib/transformer'
 
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
+
+function glob(patterns: string[]) {
+	return globSync(patterns, { dot: true })
+}
 
 function undefReadFile(path: string) {
 	return Result.attempt(() => fs.readFileSync(path, 'utf8')).ok_undef()
@@ -68,18 +72,18 @@ const ScriptTarget = c.wrap<ScriptTarget>('ScriptTarget', input => {
 })
 
 type CompilationEnvironment = {
-	platform: 'browser' | 'node' | 'none',
+	platform: 'browser' | 'node' | 'anywhere',
 	target: ScriptTarget,
 }
 namespace CompilationEnvironment {
-	const decoder = c.object<CompilationEnvironment>({
-		platform: c.literals('browser', 'node', 'none'),
+	const fullDecoder = c.object<CompilationEnvironment>({
+		platform: c.literals('browser', 'node', 'anywhere'),
 		target: ScriptTarget,
 	})
 
-	export function parse(env: unknown): Result<CompilationEnvironment> {
+	export const decoder = c.wrap('CompilationEnvironment', env => {
 		if (typeof env !== 'string')
-			return decoder.decode(env)
+			return fullDecoder.decode(env)
 
 		switch (env) {
 			case 'legacybrowser':
@@ -88,18 +92,18 @@ namespace CompilationEnvironment {
 				return Ok({ platform: 'browser', target: ts.ScriptTarget.Latest })
 			case 'node':
 				return Ok({ platform: 'node', target: ts.ScriptTarget.Latest })
-			case 'none':
-				return Ok({ platform: 'none', target: ts.ScriptTarget.Latest })
+			case 'anywhere':
+				return Ok({ platform: 'anywhere', target: ts.ScriptTarget.Latest })
 		}
 		return Err(`invalid environment shorthand: ${env}`)
-	}
+	})
 
 	// https://www.typescriptlang.org/docs/handbook/tsconfig-json.html#types-typeroots-and-types
 	export function options({ platform, target }: CompilationEnvironment) {
 		switch (platform) {
 			case 'node':
 				return {}
-			case 'none':
+			case 'anywhere':
 				return { types: [], lib: [] }
 			case 'browser':
 				const opt = { types: [], lib: ['dom'] }
@@ -124,8 +128,11 @@ function NonEmptyDecoder<T>(decoder: c.Decoder<T>): c.Decoder<[T, ...T[]]> {
 		if (result.is_err()) return result
 		const values = result.value
 		if (values.length === 0) return Err(`array empty, expected at least one item`)
-		return [values[0], ...values.slice(1)]
+		return Ok([values[0], ...values.slice(1)])
 	})
+}
+function flattenNonEmpty<T>(item: T | NonEmpty<T>): NonEmpty<T> {
+	return Array.isArray(item) ? item : [item]
 }
 
 const MacroTsConfig = c.object({
@@ -133,7 +140,7 @@ const MacroTsConfig = c.object({
 	packages: c.array(c.object({
 		location: c.string,
 		entry: c.union(c.string, NonEmptyDecoder(c.string)),
-		environments: NonEmptyDecoder(CompilationEnvironment.parse),
+		environments: c.union(CompilationEnvironment.decoder, NonEmptyDecoder(CompilationEnvironment.decoder)),
 		dev: c.optional(c.boolean),
 	})),
 })
@@ -162,32 +169,6 @@ function makeDevModeOptions(devMode: boolean) {
 	return { noUnusedParameters: releaseMode, noUnusedLocals: releaseMode, preserveConstEnums: releaseMode, removeComments: releaseMode }
 }
 
-
-// type EmitOptions = {}
-type EmitOptions = true
-const defaultMacrosEntry = './.macro-ts.ts'
-
-function produceConfig(entryGlob: string | undefined, workingDir: string) {
-	const configPath = nodepath.join(workingDir, './.macro-ts.toml')
-	const configResult = parseMacroTsConfig(configPath)
-
-	const [macrosEntry, entryFiles] = entryGlob !== undefined
-		// if they pass an entryGlob, then we assume they might be prototyping, so we don't get mad if we don't find a config file
-		? [configResult.change(c => c.macros || defaultMacrosEntry).default(defaultMacrosEntry), globSync(entryGlob)]
-		// if they don't pass one, then we *must* find a config file at the current working directory, so we can discover their list of packages
-		: (() => {
-			const config = configResult.unwrap()
-			// TODO this isn't right
-			// each of these projects could potentially have different environments etc.
-			// so we need to go over each of these separately
-			// the entire config parsing stage should probably be moved up a level,
-			// and this function should take more precise inputs
-			return t(config.macros || defaultMacrosEntry, config.packages.flatMap(p => globSync(p.include)))
-		})()
-
-	return { macrosEntry, entryFiles }
-}
-
 export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.Diagnostic[]): never {
 	const diagnosticText = ts.formatDiagnosticsWithColorAndContext(diagnostics, {
 		getNewLine: () => ts.sys.newLine,
@@ -195,6 +176,46 @@ export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.D
 		getCanonicalFileName: ts.sys.useCaseSensitiveFileNames ? x => x : x => x.toLowerCase(),
 	})
 	return fatal(diagnosticText)
+}
+
+
+// type EmitOptions = {}
+type EmitOptions = true
+const defaultMacrosEntry = './.macros.ts'
+
+type CompileArgs = {
+	entryFiles: string[],
+	emitOptions?: {
+		target: ScriptTarget,
+		lib?: string[],
+		types?: string[],
+	},
+}
+
+function produceConfig(entryGlob: string | undefined, workingDir: string) {
+	const configPath = nodepath.join(workingDir, './.macro-ts.toml')
+	// const configText = undefReadFile(configPath)
+	// if (configText) {
+	// 	//
+	// }
+	const configResult = parseMacroTsConfig(configPath)
+
+	const [macrosEntry, entryFiles] = entryGlob !== undefined
+		? [configResult.change(c => c.macros || defaultMacrosEntry).default(defaultMacrosEntry), glob([entryGlob])]
+		: (() => {
+			const { macros, packages } = configResult.unwrap()
+			// TODO this isn't right
+			// each of these projects could potentially have different environments etc.
+			// so we need to go over each of these separately
+			// the entire config parsing stage should probably be moved up a level,
+			// and this function should take more precise inputs
+			return t(
+				macros || defaultMacrosEntry,
+				packages.flatMap(({ location, entry }) => glob(flattenNonEmpty(entry).map(e => nodepath.join(location, e)))),
+			)
+		})()
+
+	return { macrosEntry, entryFiles }
 }
 
 export function produceTransformer(macrosEntry: string, workingDir: string) {

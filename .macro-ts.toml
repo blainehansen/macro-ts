@@ -1,13 +1,16 @@
 macros = '.macros.ts'
 
 [[packages]]
-include = 'app/main.ts'
-environment = 'anywhere'
+location = 'app'
+entry = ['main.ts']
+environments = ['anywhere']
 
 [[packages]]
-include = 'bin/*.ts'
-environment = 'node'
+location = 'bin'
+entry =[ '*.ts']
+environments = ['node']
 
 [[packages]]
-include = 'lib/**/*.ts'
-environment = 'anywhere'
+location = 'lib'
+entry = ['**/*.ts']
+environments = ['anywhere']

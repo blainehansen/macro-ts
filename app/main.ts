@@ -4,3 +4,10 @@ function add(r: number | undefined) {
 
 console.log(add(1))
 console.log(add(undefined))
+
+@yo!!()
+function yo() {
+	console.log('yo')
+}
+
+yo_yo()

@@ -1,5 +1,5 @@
 import ts = require('typescript')
-import { BlockMacro, FunctionMacro, ImportMacro } from './lib/transformer'
+import { BlockMacro, FunctionMacro, DecoratorMacro, ImportMacro } from './lib/transformer'
 
 export const macros = {
 	die: FunctionMacro(args => {
@@ -39,6 +39,17 @@ export const macros = {
 			expression: ts.createPropertyAccess(target, ts.createIdentifier('value')),
 			append: [],
 		}
+	}),
+
+	yo: DecoratorMacro(statement => {
+		if (!ts.isFunctionDeclaration(statement)) throw new Error()
+		if (statement.name === undefined) throw new Error()
+
+		const newName = statement.name.text + '_yo'
+		return [ts.updateFunctionDeclaration(
+			statement, undefined, statement.modifiers, statement.asteriskToken, ts.createIdentifier(newName),
+			statement.typeParameters, statement.parameters, statement.type, statement.body,
+		)]
 	}),
 
 	// y: ImportMacro<undefined>((ctx, targetPath, targetSource) => {

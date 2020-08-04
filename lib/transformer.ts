@@ -106,21 +106,58 @@ export type DecoratorMacro = (
 	statement: ts.Statement,
 	args: ts.NodeArray<ts.Expression> | undefined,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => {
-	original?: ts.Statement,
-	additional?: ts.Statement[],
-}
+) => ts.Statement[]
 export type DecoratorMacroReturn = ReturnType<DecoratorMacro>
 export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'type', 'decorator'> {
 	return { type: 'decorator', execute }
 }
 
-function attemptDecoratorMacro(
-	ctx: CompileContext,
+function attemptDecoratorMacros<S>(
+	ctx: CompileContext<S>,
 	statement: ts.Statement,
+	// argumentsVisitor: (args: ts.NodeArray<ts.Expression>) => ts.NodeArray<ts.Expression>,
 ): DecoratorMacroReturn | undefined {
-	//
+	if (statement.decorators === undefined)
+		return undefined
+
+	const statements = [] as ts.Statement[]
+	for (const decorator of statement.decorators) {
+		const { expression } = decorator
+		if (!(
+			ts.isCallExpression(expression)
+			&& ts.isNonNullExpression(expression.expression)
+			&& ts.isNonNullExpression(expression.expression.expression)
+			&& ts.isIdentifier(expression.expression.expression.expression)
+		))
+			throw new Error("normal decorators are lame")
+
+		const macro = ctx.macros[expression.expression.expression.expression.text]
+		if (!macro || macro.type !== 'decorator') throw new Error()
+		const additionalStatements = macro.execute(statement, expression.arguments, expression.typeArguments)
+		Array.prototype.push.apply(statements, additionalStatements)
+	}
+
+	return statements
 }
+// statements where the creation function includes decorators (implying support)
+// FunctionDeclaration
+// ClassDeclaration
+// InterfaceDeclaration
+// TypeAliasDeclaration
+// EnumDeclaration
+// ModuleDeclaration
+// VariableStatement
+// ImportEqualsDeclaration
+// ImportDeclaration
+// ExportAssignment
+// ExportDeclaration
+
+// these aren't statements but do seem to have support for decorators
+// it seems only FunctionDeclaration/ClassDeclaration have them
+// ParameterDeclaration
+// SetAccessorDeclaration
+// GetAccessorDeclaration
+// ConstructorDeclaration
 
 
 export type FileContext = {
@@ -225,9 +262,7 @@ function attemptVisitStatement<S>(
 			if (append) Array.prototype.push.apply(appends, append)
 			return statement
 		}
-		const macroResult = attemptFunctionMacro(ctx, node, args => {
-			return ts.createNodeArray(args.map(visitNodeSubsuming))
-		})
+		const macroResult = attemptFunctionMacro(ctx, node, visitArgsSubsuming)
 		if (macroResult) {
 			const { prepend, expression, append } = macroResult
 			if (prepend) Array.prototype.push.apply(prepends, prepend)
@@ -240,6 +275,9 @@ function attemptVisitStatement<S>(
 		const result = ts.visitNode(node, subsumingVisitor)
 		if (!result) throw new Error()
 		return result
+	}
+	function visitArgsSubsuming(args: ts.NodeArray<ts.Expression>) {
+		return ts.createNodeArray(args.map(visitNodeSubsuming))
 	}
 	function visitChildrenSubsuming<N extends ts.Node>(node: N): N {
 		const result = ts.visitEachChild(node, subsumingVisitor, context)
@@ -375,25 +413,6 @@ function attemptVisitStatement<S>(
 			statement.members.map(visitNodeSubsuming),
 		))
 
-	// for decorators
-	// FunctionDeclaration
-	// ClassDeclaration
-	// InterfaceDeclaration
-	// TypeAliasDeclaration
-	// EnumDeclaration
-	// ModuleDeclaration
-	// VariableStatement
-	// ImportEqualsDeclaration
-	// ImportDeclaration
-	// ExportAssignment
-	// ExportDeclaration
-
-	// ParameterDeclaration
-	// SetAccessorDeclaration
-	// GetAccessorDeclaration
-	// ConstructorDeclaration
-	// IndexSignatureDeclaration
-
 	else if (ts.isWithStatement(statement))
 		return include(ts.updateWith(
 			statement,
@@ -471,10 +490,17 @@ function flatVisitStatements<S>(
 	while (index < statements.length) {
 		const current = statements[index]
 
-		const result = attemptBlockMacro(ctx, current, statements[index + 1], context)
-		if (result) {
-			Array.prototype.push.apply(finalStatements, result)
+		const blockResult = attemptBlockMacro(ctx, current, statements[index + 1], context)
+		if (blockResult) {
+			Array.prototype.push.apply(finalStatements, blockResult)
 			index += 2
+			continue
+		}
+
+		const decoratorsResult = attemptDecoratorMacros(ctx, current)
+		if (decoratorsResult) {
+			Array.prototype.push.apply(finalStatements, decoratorsResult)
+			index += 1
 			continue
 		}
 

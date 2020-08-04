@@ -2,15 +2,17 @@
 
 This project aims to fill the missing meta-programming gap in typescript.
 
-Anyone who's used a statically typed language with a powerful and safe macro/meta-programming system knows that they are essential to truly unlock the full power of the language. Static types without meta-programming are simply too inflexible to be used for common purposes.
+Anyone who's used a statically typed language with a powerful and safe macro/meta-programming system knows that they are essential to truly unlock the full power of the language. Statically typed languages without meta-programming are simply too inflexible to be truly productive, and statically typed languages *with* meta-programming are unbelievably safe and productive.
 
-You may be saying: but [typescript already has macros!]() However, it's very important to notice that the transformation process allowed by the typescript compiler **don't typecheck the transformed output**. This makes them unsafe and not very useful.
+You may be saying: but [typescript already has macros!](https://blog.logrocket.com/using-typescript-transforms-to-enrich-runtime-code-3fd2863221ed/) However, it's very important to notice that the transformation process allowed by the typescript compiler **don't typecheck the transformed output**. This makes them unsafe and not very useful.
 
-`macro-ts` attempts to solve that, at least in the short term.
+[Mapped](https://www.typescriptlang.org/docs/handbook/advanced-types.html#mapped-types) and [Conditional](https://www.typescriptlang.org/docs/handbook/advanced-types.html#conditional-types) types can do some of the work that traditional macros would usually do, but they aren't nearly complete.
+
+`macro-ts` attempts to solve that, at least in the short term. This project also adds some nice conveniences to using the compiler, and compiling for multiple simply defined targets.
 
 ## Quickstart
 
-You can quickly run/check/build a file just by calling the command with an entry file or glob. This method is appropriate for rapid prototyping or experimentation, and will use the `none` compilation environment, and will try to load macros from a `.macro-ts.ts` file in the current working directory.
+You can quickly run/check/build a file just by calling the command with an entry file or glob. This method is appropriate for rapid prototyping or experimentation, will use the `anywhere` compilation environment, and will try to load macros from a `.macro-ts.ts` file in the current working directory.
 
 ```bash
 npx macro-ts run someScript.ts
@@ -42,7 +44,7 @@ location = 'lib'
 # macro-ts uses the fast-glob npm package for globbing
 # so negative/excluding globs are supported
 entry = ['**/*.ts', '!*.test.ts']
-environments = ['none', { platform: 'none', target: 'ES5' }]
+environments = ['anywhere', { platform: 'anywhere', target: 'ES5' }]
 ```
 
 
@@ -52,7 +54,7 @@ In the javascript world, we almost always write code with one of these intended 
 
 - `node`: needs access to the various node libraries and globals.
 - `browser`: needs access to the various dom libraries and globals.
-- `none`: shouldn't assume the existence of *any* special libraries or globals.
+- `anywhere`: shouldn't assume the existence of *any* special libraries or globals.
 
 Typescript has ways of including different type libraries for node and the browser, but they're a little clunky and inexact. `macro-ts` introduces the concept of compilation environments that allow you to easily choose the ambient types that should be available, as well as the typescript `target`.
 
@@ -61,7 +63,7 @@ There are four environment shorthands, which expand to an object of this type:
 ```ts
 import ts = require('typescript')
 type CompilationEnvironment = {
-  platform: 'node' | 'browser' | 'none',
+  platform: 'node' | 'browser' | 'anywhere',
   target: ts.ScriptTarget,
 };
 ```
@@ -69,7 +71,7 @@ type CompilationEnvironment = {
 - `legacybrowser`: `{ platform: 'browser', target: ts.ScriptTarget.ES5 }`
 - `modernbrowser`: `{ platform: 'browser', target: ts.ScriptTarget.Latest }`
 - `node`: `{ platform: 'node', target: ts.ScriptTarget.Latest }`
-- `none`: `{ platform: 'none', target: ts.ScriptTarget.Latest }`
+- `anywhere`: `{ platform: 'anywhere', target: ts.ScriptTarget.Latest }`
 
 
 ## cli useage
@@ -139,6 +141,9 @@ export type FunctionMacro = (
 };
 ```
 
+Example: TODO
+
+
 ### `BlockMacro`
 
 Within a block of statements, you can use the `macroName!!;{ statements... }` syntax to expand those statements. Some examples of things that are possible:
@@ -156,6 +161,8 @@ export type BlockMacro = (
   args: ts.NodeArray<ts.Statement>,
 ) => ts.Statement[];
 ```
+
+Example: TODO
 
 
 ### `DecoratorMacro`
@@ -197,13 +204,16 @@ Type signature:
 ```ts
 export type DecoratorMacro = (
   statement: ts.Statement,
-  args: ts.NodeArray<ts.Expression> | undefined,
+  args: ts.NodeArray<ts.Expression>,
   typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
 ) => {
   original?: ts.Statement,
   additional?: ts.Statement[],
 };
 ```
+
+Example: TODO
+
 
 ### `import`
 
@@ -229,6 +239,8 @@ export type FileContext = {
 };
 ```
 
+Example: TODO
+
 
 ## Project goals:
 
@@ -243,10 +255,10 @@ Overall, we want the macros to have these properties:
 Anything that requires first-class support from the actual typescript compiler basically won't be considered. If the compiler devs decide to make our lives easier, we'll gladly accept it. But we aren't going to wait around for them.
 
 - Hygienic Macros. This would be very complicated to get right without first-class support from the compiler.
-- Having a less ugly syntax. The general `macroName!!` syntax is very ugly, but it's a hack that has some important properties. Suggestions for other syntaxes that meet these same requirements are welcome!
+- Having a less ugly syntax. The `macroName!!` syntax is very ugly, but it's a hack that has some important properties. Suggestions for other syntaxes that meet these same requirements are welcome!
   - `!!` is accepted as valid syntax by the typescript parser.
   - `identifier!!` is *technically* valid (asserting the identifier is non-nullish *twice*) but never actually useful. This makes it distinct from normal uses of the non-nullish assertion.
-- Alignment with typescript/javascript. As far as I'm concerned, javascript is just a compile target (and a lousy one), and typescript is the only just barely acceptable way to write web applications. Once webassembly has direct access to browser apis and is well-supported enough, I likely won't write a line of typescript ever again.
+- Alignment with typescript/javascript. As far as I'm concerned, javascript is just a compile target (and a lousy one), and typescript is the only just barely acceptable way to write web applications. Once webassembly has direct access to the browser api and is well-supported enough, I likely won't write a line of typescript ever again.
 
 
 ## Known Limitations
