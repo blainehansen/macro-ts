@@ -107,12 +107,15 @@ type CompileArgs = {
 	outDir: string,
 	platform: CompilationEnvironment['platform'],
 	target: ScriptTarget,
+	module: ts.ModuleKind,
 	lib?: string[],
 	types?: string[],
 }
 
 export const configLocation = './.macro-ts.toml'
 export const defaultMacrosEntry = './.macros.ts'
+
+const defaultEnvironment: CompilationEnvironment = { platform: 'anywhere', target: ts.ScriptTarget.Latest }
 
 export function produceConfig(entryGlob: string | undefined, workingDir: string) {
 	const configPath = nodepath.join(workingDir, configLocation)
@@ -125,23 +128,32 @@ export function produceConfig(entryGlob: string | undefined, workingDir: string)
 			.try_change(obj => MacroTsConfig.decode(obj))
 		: undefined
 
-	const [macrosEntry, compileArgsList] = entryGlob !== undefined
+	const [macrosEntry, configDevMode, compileArgsList] = entryGlob !== undefined
 		? exec(() => {
-			const entryFiles = glob([entryGlob], [])
-			const compileArgs: CompileArgs[] = [{ entryFiles, outDir: '.', platform: 'anywhere', target: ts.ScriptTarget.Latest }]
+			const [macrosEntry, configDevMode, environment] = configResult === undefined
+				? [defaultMacrosEntry, false, defaultEnvironment]
+				: exec(() => {
+					const config = MacroTsConfig.expect(configResult)
+					const {
+						environment = defaultEnvironment,
+						dev = false,
+					} = MacroTsConfig.selectPackageForGlob(entryGlob, config) || {}
+					return t(config.macros || defaultMacrosEntry, dev, environment)
+				})
 
-			if (configResult !== undefined) {
-				const { macros } = MacroTsConfig.expect(configResult)
-				return t(macros || defaultMacrosEntry, compileArgs)
-			}
-
-			return t(defaultMacrosEntry, compileArgs)
+			// outDir can be a pointless value since entryGlob being defined means we're checking
+			return t(macrosEntry, configDevMode, [{
+				entryFiles: glob([entryGlob], []), outDir: '.',
+				...environment,
+				...CompilationEnvironment.options(environment)
+			}] as CompileArgs[])
 		})
 		: exec(() => {
 			const { macros, packages } = MacroTsConfig.expect(configResult)
 			return t(
 				macros || defaultMacrosEntry,
-				packages.map(({ location, entry, exclude, environment }) => {
+				false,
+				Object.values(packages).map(({ location, entry, exclude, environment }): CompileArgs => {
 					const entries = NonEmpty.flattenInto(entry).map(e => nodepath.join(location, e))
 					const excludes = exclude ? NonEmpty.flattenInto(exclude) : []
 					return {
@@ -154,7 +166,7 @@ export function produceConfig(entryGlob: string | undefined, workingDir: string)
 			)
 		})
 
-	return { macrosEntry, compileArgsList }
+	return { macrosEntry, configDevMode, compileArgsList }
 }
 
 export function produceTransformer(macrosEntry: string, workingDir: string) {
@@ -242,7 +254,7 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 
 export function compile(entryGlob: string | undefined, devMode: boolean, shouldEmit: boolean) {
 	const workingDir = process.cwd()
-	const { macrosEntry, compileArgsList } = produceConfig(entryGlob, workingDir)
+	const { macrosEntry, configDevMode, compileArgsList } = produceConfig(entryGlob, workingDir)
 	const { transformer, transformedTsSources } = produceTransformer(macrosEntry, workingDir)
 
 	const emitDirectory = './target/.dist'
@@ -261,7 +273,7 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 		}
 
 		const compileOptions = {
-			...alwaysOptions, ...makeDevModeOptions(devMode),
+			...alwaysOptions, ...makeDevModeOptions(devMode || configDevMode),
 			...(
 				shouldEmit
 					? { ...alwaysEmitOptions, outDir: nodepath.join(emitDirectory, outDir), target, module, lib, types }
@@ -286,8 +298,8 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 function check(entryGlob: string | undefined, devMode: boolean) {
 	compile(entryGlob, devMode, false)
 }
-function build(entryGlob: string | undefined, devMode: boolean) {
-	compile(entryGlob, devMode, true)
+function build(devMode: boolean) {
+	compile(undefined, devMode, true)
 }
 
 
@@ -304,6 +316,8 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		transformedTsSources.set(sourceFile.fileName, printer.printFile(newSourceFile))
 	}
 
+	// TODO project discovery makes sense here?
+	// I'm especially worried about testing, where some dom library has node tests that use ambient dom filler types
 	const runOptions = {
 		...alwaysOptions, ...makeDevModeOptions(devMode),
 		noEmit: false, noEmitOnError: true, sourceMap: true, inlineSources: true,
@@ -446,8 +460,8 @@ export function main(argv: string[]) {
 
 	switch (command) {
 		case 'build':
-			if (args.length > 1) fatal(`build can only accept one positional argument`)
-			build(args[0], devMode)
+			if (args.length) fatal(`build accepts no positional arguments`)
+			build(devMode)
 			break
 
 		case 'check':

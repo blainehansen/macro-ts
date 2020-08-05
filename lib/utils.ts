@@ -17,6 +17,8 @@ export type PickVariants<U, K extends UnionKeys<U>, V extends U[K]> = U extends 
 	? U[K] extends V ? U : never
 	: never
 
+export type UnboxArray<A extends unknown[]> = A extends (infer T)[] ? T : never
+
 export class Registry<T> {
 	protected items: Dict<T> = {}
 	peek(key: string) {
@@ -55,6 +57,19 @@ export namespace NonEmptyOrSingle {
 	export function decoder<T>(decoder: c.Decoder<T>): c.Decoder<NonEmptyOrSingle<T>> {
 		return c.union(decoder, NonEmpty.decoder(decoder))
 	}
+}
+
+export function longestMatchingStem(value: string, stems: string[]): string | undefined {
+	const longest = { length: 0, stem: undefined as string | undefined }
+	for (const stem of stems) {
+		const stemLength = stem.length
+		if (stemLength <= longest.length || !value.startsWith(stem)) continue
+
+		longest.stem = stem
+		longest.length = stemLength
+	}
+
+	return longest.stem
 }
 
 // export abstract class AbstractFileSystem {

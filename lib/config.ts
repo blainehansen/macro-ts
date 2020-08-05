@@ -2,7 +2,7 @@ import * as ts from 'typescript'
 import * as c from '@ts-std/codec'
 import { Result, Ok, Err } from '@ts-std/monads'
 
-import { NonEmptyOrSingle, exec } from './utils'
+import { NonEmptyOrSingle, Dict, UnboxArray, exec, longestMatchingStem } from './utils'
 
 export type ScriptTarget = Exclude<ts.ScriptTarget, ts.ScriptTarget.JSON>
 export const ScriptTarget = c.wrap<ScriptTarget>('ScriptTarget', input => {
@@ -77,7 +77,7 @@ export namespace CompilationEnvironment {
 
 const StringNonEmptyOrSingle = NonEmptyOrSingle.decoder(c.string)
 
-const MacroTsConfigDecoder = c.object({
+const RawMacroTsConfigDecoder = c.object({
 	macros: c.optional(c.string),
 	packages: c.array(c.object({
 		location: c.string,
@@ -88,9 +88,24 @@ const MacroTsConfigDecoder = c.object({
 		dev: c.optional(c.boolean),
 	})),
 })
-export type MacroTsConfig = c.TypeOf<typeof MacroTsConfigDecoder>
+type RawMacroTsConfig = c.TypeOf<typeof RawMacroTsConfigDecoder>
+export type MacroTsConfigPackage = UnboxArray<RawMacroTsConfig['packages']>
+export type MacroTsConfig = Omit<RawMacroTsConfig, 'packages'> & { packages: Dict<MacroTsConfigPackage> }
 export namespace MacroTsConfig {
-	export const decoder = MacroTsConfigDecoder
+	export const decoder = c.wrap<MacroTsConfig>('MacroTsConfig', input => {
+		const decodeResult = RawMacroTsConfigDecoder.decode(input)
+		if (decodeResult.is_err()) return decodeResult
+		const rawConfig = decodeResult.value
+
+		const packages: Dict<MacroTsConfigPackage> = {}
+		for (const pkg of rawConfig.packages) {
+			const { location } = pkg
+			if (location in packages) return Err(location)
+			packages[location] = pkg
+		}
+
+		return Ok({ ...rawConfig, packages })
+	})
 
 	export function expect(result: Result<MacroTsConfig> | undefined): MacroTsConfig {
 		if (result === undefined)
@@ -101,6 +116,12 @@ export namespace MacroTsConfig {
 	}
 
 	export function decode(obj: unknown) {
-		return MacroTsConfigDecoder.decode(obj)
+		return decoder.decode(obj)
+	}
+
+	export function selectPackageForGlob(glob: string, { packages }: MacroTsConfig) {
+		const longestLocation = longestMatchingStem(glob, Object.keys(packages))
+		if (longestLocation === undefined) return undefined
+		return packages[longestLocation]
 	}
 }

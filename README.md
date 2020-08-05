@@ -10,6 +10,18 @@ You may be saying: but [typescript already has macros!](https://blog.logrocket.c
 
 `macro-ts` attempts to solve that, at least in the short term. This project also adds some nice conveniences to using the compiler, and compiling for multiple simply defined targets.
 
+
+
+
+
+<!--
+the cli should be convenient to use, and allow people to cleanly target the parts of their app they're actually working on
+what this means is that I can run any file or check any file or glob in my project, and it will have the correct config picked up
+that's actually pretty simple, with the longestMatchingStem function, and a dictionary of package locations
+now I've basically implemented that, I just have to test it
+-->
+
+
 ## Quickstart
 
 You can quickly run/check/build a file just by calling the command with an entry file or glob. This method is appropriate for rapid prototyping or experimentation, will use the `anywhere` compilation environment, and will try to load macros from a `.macro-ts.ts` file in the current working directory.
