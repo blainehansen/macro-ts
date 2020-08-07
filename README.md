@@ -571,5 +571,5 @@ I don't know much about sourcemaps, and nice sourcemaps are less important to me
 
 ## Roadmap
 
-- [ ] - Improve performance through caching, both of file data and build outputs.
-- [ ] - Provide nice "codeframe" error functionality to macro functions.
+- [ ] Improve performance through caching, both of file data and build outputs.
+- [ ] Provide nice "codeframe" error functionality to macro functions.
