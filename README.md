@@ -224,7 +224,10 @@ macro-ts --dev build
 Here's a simple macros file:
 
 ```ts
-import { FunctionMacro, BlockMacro, DecoratorMacro, ImportMacro } from 'macro-ts'
+import {
+  FunctionMacro, BlockMacro,
+  DecoratorMacro, ImportMacro,
+} from 'macro-ts'
 export const macros = {
   f: FunctionMacro(/* ... */),
   b: BlockMacro(/* ... */),
@@ -262,8 +265,15 @@ export const macros = {
     const target = args[0]
     return {
       prepend: [ts.createIf(
-        ts.createBinary(target, ts.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken), ts.createIdentifier('undefined')),
-        ts.createThrow(ts.createNew(ts.createIdentifier('Error'), undefined, [])), undefined,
+        ts.createBinary(
+          target,
+          ts.createToken(ts.SyntaxKind.EqualsEqualsEqualsToken),
+          ts.createIdentifier('undefined'),
+        ),
+        ts.createThrow(
+          ts.createNew(ts.createIdentifier('Error'), undefined, []),
+        ),
+        undefined,
       )],
       expression: target,
       append: [],
@@ -561,5 +571,5 @@ I don't know much about sourcemaps, and nice sourcemaps are less important to me
 
 ## Roadmap
 
-[ ] - Improve performance through caching, both of file data and build outputs.
-[ ] - Provide nice "codeframe" error functionality to macro functions.
+- [ ] - Improve performance through caching, both of file data and build outputs.
+- [ ] - Provide nice "codeframe" error functionality to macro functions.
