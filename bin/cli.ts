@@ -88,7 +88,7 @@ const alwaysEmitOptions = {
 
 function makeDevModeOptions(devMode: boolean) {
 	const releaseMode = !devMode
-	return { noUnusedParameters: releaseMode, noUnusedLocals: releaseMode, preserveConstEnums: releaseMode, removeComments: releaseMode }
+	return { noUnusedParameters: releaseMode, noUnusedLocals: releaseMode, preserveConstEnums: !releaseMode, removeComments: releaseMode }
 }
 
 export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.Diagnostic[]): never {
@@ -423,8 +423,7 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 
 	const jsHandler = require.extensions['.js']
 	require.extensions['.ts'] = function(mod: any, filename) {
-		// if (register.ignored(filename)) return old(mod, filename)
-		// if (/(?:^|\/)node_modules\//.test(filename)) return jsHandler(mod, filename)
+		if (/(?:^|\/)node_modules\//.test(filename)) return jsHandler(mod, filename)
 
 		const originalModuleCompile = mod._compile
 		mod._compile = function(code: string, fileName: string) {
@@ -438,6 +437,24 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 	Module.runMain()
 }
 
+
+const helpText = `\
+  Usage: macro-ts [options] <command>
+
+  Commands:
+    run <filename>.ts           Run the specified file.
+    check [entryGlob]           Perform typechecking without running or emitting.
+                                  Checks all configured packages if no entryGlob is provided.
+    build                       Typecheck and emit javascript for all configured packages,
+                                  emitting into target/.dist.
+
+  Options:
+    -h, --help                  Print this message.
+    -v, --version               Print version.
+    -d, --dev                   Set noUnusedParameters, noUnusedLocals, preserveConstEnums, and removeComments
+                                  to more lenient dev quality values.
+`
+const versionText = require('../package.json').version
 
 export function main(argv: string[]) {
 	const {
@@ -454,29 +471,28 @@ export function main(argv: string[]) {
 		'-d': '--dev',
 	}, { argv, stopAtPositional: true })
 
-	// TODO
-	if (help) exit('no help yet')
-	if (version) exit('no version yet')
+	if (help) exit(helpText)
+	if (version) exit(versionText)
 
 	switch (command) {
 		case 'build':
-			if (args.length) fatal(`build accepts no positional arguments`)
+			if (args.length) fatal(`build accepts no positional arguments\n\n` + helpText)
 			build(devMode)
 			break
 
 		case 'check':
-			if (args.length > 1) fatal(`check can only accept one positional argument`)
+			if (args.length > 1) fatal(`check can only accept one positional argument\n\n` + helpText)
 			check(args[0], devMode)
 			break
 
 		case 'run':
 			const entryFile = args[0]
-			if (entryFile === undefined) fatal(`run expects a filename`)
+			if (entryFile === undefined) fatal(`run expects a filename\n\n` + helpText)
 			run(entryFile, args.slice(1), devMode)
 			break
 
 		default:
-			fatal(`invalid command: ${command}`)
+			fatal(`invalid command: ${command}\n\n` + helpText)
 	}
 }
 
