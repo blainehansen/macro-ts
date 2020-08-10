@@ -34,6 +34,34 @@ export class Registry<T> {
 	}
 }
 
+export class Cache<T> {
+	protected map = new Map<string, T>()
+
+	has(key: string) {
+		return this.map.has(key)
+	}
+	get(key: string) {
+		return this.map.get(key)
+	}
+	set(key: string, value: T): T {
+		this.map.set(key, value)
+		return value
+	}
+}
+
+export function cachedLookup<T>(fn: (key: string) => T){
+	const cache = new Map<string, T>()
+
+	return (key: string): T => {
+		const item = cache.get(key)
+		if (item !== undefined) return item
+
+		const actual = fn(key)
+		cache.set(key, actual)
+		return actual
+	}
+}
+
 export type NonEmpty<T> = [T, ...T[]]
 export namespace NonEmpty {
 	export function decoder<T>(decoder: c.Decoder<T>): c.Decoder<NonEmpty<T>> {

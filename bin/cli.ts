@@ -10,8 +10,8 @@ import { Result } from '@ts-std/monads'
 import { sync as globSync } from 'fast-glob'
 import sourceMapSupport = require('source-map-support')
 
-import { Dict, tuple as t, exec, NonEmpty } from '../lib/utils'
-import { createTransformer, Macro, SourceChannel } from '../lib/transformer'
+import { Transformer, Macro, SourceChannel } from '../lib/transformer'
+import { Dict, tuple as t, exec, NonEmpty, cachedLookup } from '../lib/utils'
 import { MacroTsConfig, CompilationEnvironment, ScriptTarget } from '../lib/config'
 
 function fatal(message: string): never {
@@ -44,7 +44,8 @@ function isNodeExported(node: ts.Node): boolean {
 
 function createInterceptingHost(
 	workingDir: string,
-	transformedTsSources: Map<string, string>,
+	// transformedTsSources: Map<string, string>,
+	transformer: Transformer<unknown>,
 	compilerOptions: ts.CompilerOptions,
 ): ts.CompilerHost {
 	const defaultCompilerHost = ts.createCompilerHost(compilerOptions)
@@ -52,13 +53,13 @@ function createInterceptingHost(
 	return {
 		...defaultCompilerHost,
 		getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile) {
-			const transformedSource = transformedTsSources.get(nodepath.relative(workingDir, fileName))
+			const transformedSource = transformer.get(fileName)
 			return transformedSource !== undefined
 				? ts.createSourceFile(fileName, transformedSource, languageVersion)
 				: defaultCompilerHost.getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
 		},
 		fileExists(fileName) {
-			return transformedTsSources.has(nodepath.relative(workingDir, fileName)) || defaultCompilerHost.fileExists(fileName)
+			return transformer.has(fileName) || defaultCompilerHost.fileExists(fileName)
 		},
 		// getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
 		// getDirectories: path => ts.sys.getDirectories(path),
@@ -108,6 +109,7 @@ type CompileArgs = {
 	platform: CompilationEnvironment['platform'],
 	target: ScriptTarget,
 	module: ts.ModuleKind,
+	dev: boolean | undefined,
 	lib?: string[],
 	types?: string[],
 }
@@ -117,65 +119,84 @@ export const defaultMacrosEntry = './.macros.ts'
 
 const defaultEnvironment: CompilationEnvironment = { platform: 'anywhere', target: ts.ScriptTarget.Latest }
 
-export function produceConfig(entryGlob: string | undefined, workingDir: string) {
+function attemptGetConfig(workingDir: string) {
 	const configPath = nodepath.join(workingDir, configLocation)
 	const configText = undefReadFile(configPath)
+	if (configText === undefined) return undefined
 
-	// if an entryGlob is given, then we don't need to find a file
-	const configResult = configText !== undefined
-		? Result.attempt(() => toml.parse(configText))
-			.change_err(e => e.message)
-			.try_change(obj => MacroTsConfig.decode(obj))
-		: undefined
+	const configResult = Result.attempt(() => toml.parse(configText))
+		.change_err(e => e.message)
+		.try_change(obj => MacroTsConfig.decode(obj))
 
-	const [macrosEntry, configDevMode, compileArgsList] = entryGlob !== undefined
-		? exec(() => {
-			const [macrosEntry, configDevMode, environment] = configResult === undefined
-				? [defaultMacrosEntry, false, defaultEnvironment]
-				: exec(() => {
-					const config = MacroTsConfig.expect(configResult)
-					const {
-						environment = defaultEnvironment,
-						dev = false,
-					} = MacroTsConfig.selectPackageForGlob(entryGlob, config) || {}
-					return t(config.macros || defaultMacrosEntry, dev, environment)
-				})
-
-			// outDir can be a pointless value since entryGlob being defined means we're checking
-			return t(macrosEntry, configDevMode, [{
-				entryFiles: glob([entryGlob], []), outDir: '.',
-				...environment,
-				...CompilationEnvironment.options(environment)
-			}] as CompileArgs[])
-		})
-		: exec(() => {
-			const { macros, packages } = MacroTsConfig.expect(configResult)
-			return t(
-				macros || defaultMacrosEntry,
-				false,
-				Object.values(packages).map(({ location, entry, exclude, environment }): CompileArgs => {
-					const entries = NonEmpty.flattenInto(entry).map(e => nodepath.join(location, e))
-					const excludes = exclude ? NonEmpty.flattenInto(exclude) : []
-					return {
-						entryFiles: glob(entries, excludes),
-						outDir: location,
-						...environment,
-						...CompilationEnvironment.options(environment),
-					}
-				}),
-			)
-		})
-
-	return { macrosEntry, configDevMode, compileArgsList }
+	return MacroTsConfig.expect(configResult)
 }
 
+
+function getRunConfig(entryFile: string | undefined, workingDir: string) {
+	const config = attemptGetConfig(workingDir)
+	if (config === undefined)
+		return { macrosEntry: defaultMacrosEntry, configDevMode: false, target: ts.ScriptTarget.Latest }
+
+	const {
+		environment: { target } = defaultEnvironment,
+		dev = false,
+	} = entryFile ? MacroTsConfig.selectPackageForPath(entryFile, config) || {} : {}
+
+	return {
+		macrosEntry: (config.macros || defaultMacrosEntry),
+		configDevMode: dev,
+		target: target,
+	}
+}
+
+function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
+	const config = attemptGetConfig(workingDir)
+
+	if (entryGlob === undefined) {
+		if (config === undefined)
+			fatal(`if an entryGlob isn't provided, a .macro-ts.toml config file must be present`)
+
+		const compileArgsList = Object.values(config.packages).map(({ location, entry, exclude, environment, dev }) => {
+			const entries = NonEmpty.flattenInto(entry).map(e => nodepath.join(location, e))
+			const excludes = exclude ? NonEmpty.flattenInto(exclude) : []
+			return {
+				entryFiles: glob(entries, excludes),
+				outDir: location, dev,
+				...environment,
+				...CompilationEnvironment.options(environment),
+			} as CompileArgs
+		})
+
+		return { macrosEntry: config.macros || defaultMacrosEntry, configDevMode: false, compileArgsList }
+	}
+
+	const {
+		environment = defaultEnvironment,
+		dev = false,
+	} = config ? MacroTsConfig.selectPackageForPath(entryGlob, config) || {} : {}
+
+	const macrosEntry = config ? config.macros || defaultMacrosEntry : defaultMacrosEntry
+	const compileArgsList = [{
+		// outDir can be a pointless value since entryGlob being defined means we're checking
+		entryFiles: glob([entryGlob], []), outDir: '.',
+		dev,
+		...environment,
+		...CompilationEnvironment.options(environment)
+	} as CompileArgs]
+
+	return { macrosEntry, configDevMode: dev, compileArgsList }
+}
+
+// TODO a good idea to add some kind of hash-enabled caching
 export function produceTransformer(macrosEntry: string, workingDir: string) {
+	const macrosContents = undefReadFile(macrosEntry)
+	if (macrosContents === undefined) return undefined
+
 	const macrosOptions = {
 		...alwaysOptions, noEmit: false, noEmitOnError: true, declaration: false, sourceMap: false,
 		target: ts.ScriptTarget.Latest, module: ts.ModuleKind.CommonJS, outDir: './target/.macros',
 	}
-	// TODO a good idea to add some hash/caching
-	const macrosSourceFile = ts.createSourceFile(macrosEntry, fs.readFileSync(macrosEntry, 'utf8'), ts.ScriptTarget.ESNext)
+	const macrosSourceFile = ts.createSourceFile(macrosEntry, macrosContents, ts.ScriptTarget.Latest)
 	let foundMacros = false
 	const { transformed: [newMacrosSourceFile] } = ts.transform(macrosSourceFile, [() => sourceFile => {
 		const finalStatements = [['utils', 'Dict'], ['transformer', 'Macro']].map(([mod, name]) => ts.createImportDeclaration(
@@ -218,9 +239,18 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 	}])
 	if (!foundMacros) fatal("your macros file didn't export a `macros` identifier")
 
+
+	function dirMaker(sourceFileName: string) {
+		const currentDir = nodepath.relative(workingDir, nodepath.dirname(sourceFileName))
+		const currentFile = nodepath.basename(sourceFileName)
+		return { currentDir, currentFile }
+	}
+	const dummyTransformer = new Transformer<undefined>(undefined, workingDir, () => {}, undefReadFile, dirMaker)
+	dummyTransformer.transformSourceFile(newMacrosSourceFile)
 	const macrosCompilerHost = createInterceptingHost(
 		workingDir,
-		new Map([[macrosEntry, printer.printFile(newMacrosSourceFile)]]),
+		// new Map([[macrosEntry, printer.printFile(newMacrosSourceFile)]]),
+		dummyTransformer,
 		macrosOptions,
 	)
 	const macrosProgram = ts.createProgram([macrosEntry], macrosOptions, macrosCompilerHost)
@@ -232,60 +262,49 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 
 	const macrosPath = nodepath.join(workingDir, './target/.macros/', nodepath.basename(macrosEntry, '.ts'))
 	const macros: Dict<Macro> = require(macrosPath).macros
+	if (Object.keys(macros).length === 0) return undefined
 
-
-	function dirMaker(sourceFileName: string) {
-		const currentDir = nodepath.relative(workingDir, nodepath.dirname(sourceFileName))
-		const currentFile = nodepath.basename(sourceFileName)
-		return { currentDir, currentFile }
-	}
-	const transformedTsSources = new Map<string, string>()
-	const receivePayload: SourceChannel<undefined> = script => {
-		if (!script) return
-		const sourceFile = ts.createSourceFile(script.path, script.source, ts.ScriptTarget.ESNext)
-		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-		transformedTsSources.set(script.path, printer.printFile(newSourceFile))
-	}
-	const transformer = createTransformer(macros, receivePayload, workingDir, undefReadFile, dirMaker)
-
-	return { transformer, transformedTsSources }
+	return new Transformer<undefined>(macros, workingDir, () => {}, undefReadFile, dirMaker)
 }
 
 
 export function compile(entryGlob: string | undefined, devMode: boolean, shouldEmit: boolean) {
 	const workingDir = process.cwd()
-	const { macrosEntry, configDevMode, compileArgsList } = produceConfig(entryGlob, workingDir)
-	const { transformer, transformedTsSources } = produceTransformer(macrosEntry, workingDir)
+	const { macrosEntry, configDevMode, compileArgsList } = getCompileConfig(entryGlob, workingDir)
+	const transformer = produceTransformer(macrosEntry, workingDir)
 
 	const emitDirectory = './target/.dist'
 	if (shouldEmit)
 		fs.rmdirSync(emitDirectory, { recursive: true })
 
-	for (const { entryFiles, outDir, platform, target, module, lib, types } of compileArgsList) {
+	for (const { entryFiles, outDir, platform, target, dev, module, lib, types } of compileArgsList) {
 		console.log('checking:', outDir, '; files:', entryFiles)
-		transformedTsSources.clear()
-
-		const initialProgram = ts.createProgram(entryFiles, nonEmitOptions)
-		for (const sourceFile of initialProgram.getSourceFiles()) {
-			if (sourceFile.isDeclarationFile) continue
-			const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-			transformedTsSources.set(sourceFile.fileName, printer.printFile(newSourceFile))
-		}
-
 		const compileOptions = {
-			...alwaysOptions, ...makeDevModeOptions(devMode || configDevMode),
+			...alwaysOptions, ...makeDevModeOptions(dev || devMode || configDevMode),
 			...(
 				shouldEmit
 					? { ...alwaysEmitOptions, outDir: nodepath.join(emitDirectory, outDir), target, module, lib, types }
 					: nonEmitOptions
 			),
 		}
-		const capturingCompilerHost = createInterceptingHost(workingDir, transformedTsSources, compileOptions)
-		const transformedProgram = ts.createProgram(entryFiles, compileOptions, capturingCompilerHost)
+
+		const finalProgram = transformer
+			? exec(() => {
+				transformer.reset()
+				const initialProgram = ts.createProgram(entryFiles, nonEmitOptions)
+				for (const sourceFile of initialProgram.getSourceFiles()) {
+					if (sourceFile.isDeclarationFile) continue
+					transformer.transformSourceFile(sourceFile)
+				}
+
+				const capturingCompilerHost = createInterceptingHost(workingDir, transformer, compileOptions)
+				return ts.createProgram(entryFiles, compileOptions, capturingCompilerHost)
+			})
+			: ts.createProgram(entryFiles, compileOptions)
 
 		const diagnostics = shouldEmit
-			? transformedProgram.emit().diagnostics
-			: ts.getPreEmitDiagnostics(transformedProgram)
+			? finalProgram.emit().diagnostics
+			: ts.getPreEmitDiagnostics(finalProgram)
 
 		if (diagnostics.length) {
 			console.error(`while compiling ${outDir} for platform ${platform} and target ${ts.ScriptTarget[target]}:`)
@@ -306,70 +325,70 @@ function build(devMode: boolean) {
 import Module = require('module')
 function run(entryFile: string, runArgs: string[], devMode: boolean) {
 	const workingDir = process.cwd()
-	const { macrosEntry } = produceConfig(entryFile, workingDir)
-	const { transformer, transformedTsSources } = produceTransformer(macrosEntry, workingDir)
+	register(entryFile, workingDir, devMode)
 
-	const initialProgram = ts.createProgram([entryFile], nonEmitOptions)
-	for (const sourceFile of initialProgram.getSourceFiles()) {
-		if (sourceFile.isDeclarationFile) continue
-		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [transformer])
-		transformedTsSources.set(sourceFile.fileName, printer.printFile(newSourceFile))
-	}
+	process.argv = ['node', nodepath.join(workingDir, entryFile), ...runArgs]
+	Module.runMain()
+}
 
-	// TODO project discovery makes sense here?
-	// I'm especially worried about testing, where some dom library has node tests that use ambient dom filler types
+export function register(entryFile: string | undefined, workingDir: string, devMode: boolean) {
+	const { macrosEntry, configDevMode, target } = getRunConfig(entryFile, workingDir)
+	const transformer = produceTransformer(macrosEntry, workingDir)
+
 	const runOptions = {
-		...alwaysOptions, ...makeDevModeOptions(devMode),
+		...alwaysOptions, ...makeDevModeOptions(devMode || configDevMode),
 		noEmit: false, noEmitOnError: true, sourceMap: true, inlineSources: true,
+		target, module: ts.ModuleKind.CommonJS,
 	}
-	// const fileVersions = new Map(rootFileNames.map(fileName => [fileName, 0]))
-	// const fileContents = new Map<string, string>()
+
+	const fileVersions = new Map(entryFile ? [[entryFile, 0]] : [])
+	const fileContents = new Map<string, string>()
+	function updateFiles(contents: string, fileName: string) {
+		const previousVersion = fileVersions.get(fileName) || 0
+		const previousContents = fileContents.get(fileName)
+		if (contents === previousContents) return
+
+		fileVersions.set(fileName, previousVersion + 1)
+		fileContents.set(fileName, contents)
+		projectVersion++
+	}
+	let projectVersion = 1
+	const scriptSnapshotCache = new Map<string, ts.IScriptSnapshot>()
 
 	const registry = ts.createDocumentRegistry(ts.sys.useCaseSensitiveFileNames, workingDir)
 	const service = ts.createLanguageService({
-		// getProjectVersion: () => String(projectVersion),
-		// getScriptFileNames: () => Array.from(fileVersions.keys()),
-		getScriptFileNames: () => [entryFile],
-		getScriptVersion(_fileName: string) {
-			// const version = fileVersions.get(fileName)
-			// return version ? version.toString() : ''
-			return '1'
+		getProjectVersion: () => String(projectVersion),
+		getScriptFileNames: () => Array.from(fileVersions.keys()),
+		getScriptVersion(fileName: string) {
+			const version = fileVersions.get(fileName)
+			return version ? version.toString() : ''
 		},
 		getScriptSnapshot(fileName: string) {
-			const contents = transformedTsSources.get(nodepath.relative(workingDir, fileName)) || undefReadFile(fileName)
-			// let contents = fileContents.get(fileName)
+			const cachedScriptSnapshot = scriptSnapshotCache.get(fileName)
+			if (cachedScriptSnapshot !== undefined) return cachedScriptSnapshot
 
-			if (contents === undefined) return undefined
-			return ts.ScriptSnapshot.fromString(contents)
+			const fileContents = (transformer ? transformer.get(fileName) : undefined) || undefReadFile(fileName)
+			if (fileContents === undefined) return undefined
+
+			const finalContents = transformer
+				? transformer.transformSource(fileName, fileContents)
+				: fileContents
+
+			const snapshot = ts.ScriptSnapshot.fromString(finalContents)
+			scriptSnapshotCache.set(fileName, snapshot)
+			return snapshot
 		},
-		// readFile: cachedReadFile,
+		readFile: cachedLookup(ts.sys.readFile),
 		// readDirectory: ts.sys.readDirectory,
-		// getDirectories: cachedLookup(debugFn('getDirectories', ts.sys.getDirectories)),
-		// fileExists: cachedLookup(debugFn('fileExists', fileExists)),
-		// directoryExists: cachedLookup(debugFn('directoryExists', ts.sys.directoryExists)),
+		getDirectories: cachedLookup(ts.sys.getDirectories),
+		fileExists: cachedLookup(ts.sys.fileExists),
+		directoryExists: cachedLookup(ts.sys.directoryExists),
 		getNewLine: () => ts.sys.newLine,
 		useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
 		getCurrentDirectory: () => workingDir,
 		getCompilationSettings: () => runOptions,
 		getDefaultLibFileName: () => ts.getDefaultLibFilePath(runOptions),
 	}, registry)
-
-	// function updateMemoryCache(contents: string, fileName: string) {
-	//   // Add to `rootFiles` when discovered for the first time.
-	//   if (!fileVersions.has(fileName)) {
-	//     rootFileNames.push(fileName)
-	//   }
-
-	//   const previousVersion = fileVersions.get(fileName) || 0
-	//   const previousContents = fileContents.get(fileName)
-	//   // Avoid incrementing cache when nothing has changed.
-	//   if (contents !== previousContents) {
-	//     fileVersions.set(fileName, previousVersion + 1)
-	//     fileContents.set(fileName, contents)
-	//     // Increment project version for every file change.
-	//     projectVersion++
-	//   }
-	// }
 
 	const emitCache = new Map<string, string>()
 	sourceMapSupport.install({
@@ -380,14 +399,12 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		},
 	})
 
-	function compileWithService(_code: string, fileName: string){
-		// updateMemoryCache(code, fileName)
+	function compileWithService(code: string, fileName: string){
+		updateFiles(code, fileName)
 
 		const output = service.getEmitOutput(fileName)
 		const diagnostics = service.getSemanticDiagnostics(fileName).concat(service.getSyntacticDiagnostics(fileName))
 
-		// const diagnosticList = filterDiagnostics(diagnostics, ignoreDiagnostics)
-		// if (diagnosticList.length) reportTSError(diagnosticList)
 		if (diagnostics.length)
 			reportDiagnostics(workingDir, diagnostics)
 
@@ -420,7 +437,6 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		return runnableCode
 	}
 
-
 	const jsHandler = require.extensions['.js']
 	require.extensions['.ts'] = function(mod: any, filename) {
 		if (/(?:^|\/)node_modules\//.test(filename)) return jsHandler(mod, filename)
@@ -433,28 +449,28 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 		return jsHandler(mod, filename)
 	}
 
-	process.argv = ['node', nodepath.join(workingDir, entryFile), ...runArgs]
-	Module.runMain()
+	return service
 }
 
 
 const helpText = `\
-  Usage: macro-ts [options] <command>
+	Usage: macro-ts [options] <command>
 
-  Commands:
-    run <filename>.ts           Run the specified file.
-    check [entryGlob]           Perform typechecking without running or emitting.
-                                  Checks all configured packages if no entryGlob is provided.
-    build                       Typecheck and emit javascript for all configured packages,
-                                  emitting into target/.dist.
+	Commands:
+		run <filename>.ts           Run the specified file.
+		check [entryGlob]           Perform typechecking without running or emitting.
+																	Checks all configured packages if no entryGlob is provided.
+		build                       Typecheck and emit javascript for all configured packages,
+																	emitting into target/.dist.
 
-  Options:
-    -h, --help                  Print this message.
-    -v, --version               Print version.
-    -d, --dev                   Set noUnusedParameters, noUnusedLocals, preserveConstEnums, and removeComments
-                                  to more lenient dev quality values.
+	Options:
+		-h, --help                  Print this message.
+		-v, --version               Print version.
+		-d, --dev                   Set noUnusedParameters, noUnusedLocals, preserveConstEnums, and removeComments
+																	to more lenient dev quality values.
 `
-const versionText = require('../package.json').version
+// const versionText = require('../package.json').version
+const versionText = "0.1.0"
 
 export function main(argv: string[]) {
 	const {
@@ -475,6 +491,12 @@ export function main(argv: string[]) {
 	if (version) exit(versionText)
 
 	switch (command) {
+		case 'run':
+			const entryFile = args[0]
+			if (entryFile === undefined) fatal(`run expects a filename\n\n` + helpText)
+			run(entryFile, args.slice(1), devMode)
+			break
+
 		case 'build':
 			if (args.length) fatal(`build accepts no positional arguments\n\n` + helpText)
 			build(devMode)
@@ -483,12 +505,6 @@ export function main(argv: string[]) {
 		case 'check':
 			if (args.length > 1) fatal(`check can only accept one positional argument\n\n` + helpText)
 			check(args[0], devMode)
-			break
-
-		case 'run':
-			const entryFile = args[0]
-			if (entryFile === undefined) fatal(`run expects a filename\n\n` + helpText)
-			run(entryFile, args.slice(1), devMode)
 			break
 
 		default:

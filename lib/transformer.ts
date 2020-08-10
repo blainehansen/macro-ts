@@ -17,26 +17,63 @@ export type Macro<S = undefined> =
 	| { type: 'decorator', execute: DecoratorMacro }
 	| { type: 'import', execute: ImportMacro<S> }
 
-export type SourceChannel<S> = (targetTs: { path: string, source: string }, sources: Dict<S>) => void
+export type SourceChannel<S> = (sources: Dict<S>) => void
 
 type CompileContext<S> = {
 	macros: Dict<Macro<S>>,
-	sendSources: SourceChannel<S>,
-	current: FileContext,
-	// TODO I'm not sure this is the right idea. we have to assume what path they'll be reading from
+	fileContext: FileContext,
+	sourceChannel: SourceChannel<S>,
+	handleScript: (script: { path: string, source: string }) => void,
 	readFile: (path: string) => string | undefined,
 }
-export function createTransformer<S>(
-	macros: Dict<Macro<S>>,
-	sendSources: SourceChannel<S>,
-	workingDir: string,
-	readFile: (path: string) => string | undefined,
-	dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
-): ts.TransformerFactory<ts.SourceFile> {
-	return context => sourceFile => {
-		const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
-		const ctx = { macros, sendSources, current: { workingDir, currentDir, currentFile }, readFile }
-		return ts.updateSourceFileNode(sourceFile, flatVisitStatements(ctx, sourceFile.statements, context))
+
+export class Transformer<S> {
+	protected readonly cache = new Map<string, string>()
+	protected readonly factory: ts.TransformerFactory<ts.SourceFile>
+
+	constructor(
+		macros: Dict<Macro<S>> | undefined,
+		workingDir: string,
+		sourceChannel: SourceChannel<S>,
+		readFile: (path: string) => string | undefined,
+		dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
+	) {
+		this.factory = macros !== undefined && Object.keys(macros).length !== 0 ? context => sourceFile => {
+			const { currentDir, currentFile } = dirMaker(sourceFile.fileName)
+
+			const statements = flatVisitStatements({
+				macros, fileContext: { workingDir, currentDir, currentFile },
+				sourceChannel,
+				// we always transform the results of import macros because they might have user code in them from interpolations
+				handleScript: ({ path, source }) => {
+					this.transformSource(path, source)
+				},
+				readFile,
+			}, sourceFile.statements, context)
+
+			return ts.updateSourceFileNode(sourceFile, statements)
+		} : context => sourceFile => sourceFile
+	}
+
+	reset() {
+		this.cache.clear()
+	}
+	has(path: string) {
+		return this.cache.has(path)
+	}
+	get(path: string) {
+		return this.cache.get(path)
+	}
+
+	transformSourceFile(sourceFile: ts.SourceFile) {
+		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [this.factory])
+		const newSource = printer.printFile(newSourceFile)
+		this.cache.set(sourceFile.fileName, newSource)
+		return newSource
+	}
+	transformSource(path: string, source: string) {
+		const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest)
+		return this.transformSourceFile(sourceFile)
 	}
 }
 
@@ -179,7 +216,7 @@ export function ImportMacro<S>(execute: ImportMacro<S>): PickVariants<Macro<S>, 
 }
 
 function attemptImportMacro<S>(
-	{ macros, current, sendSources, readFile }: CompileContext<S>,
+	{ macros, fileContext, sourceChannel, handleScript, readFile }: CompileContext<S>,
 	declaration: ts.ImportDeclaration | ts.ExportDeclaration,
 ): ts.StringLiteral | undefined {
 	const moduleSpecifier = declaration.moduleSpecifier
@@ -205,8 +242,9 @@ function attemptImportMacro<S>(
 	const source = readFile(path)
 	if (source === undefined) throw new Error()
 
-	const { sources = {}, statements  } = macro.execute(current, path, source)
-	sendSources({ path: path + '.ts', source: printNodes(statements) }, sources)
+	const { sources = {}, statements  } = macro.execute(fileContext, path, source)
+	sourceChannel(sources)
+	handleScript({ path: path + '.ts', source: printNodes(statements) })
 
 	return ts.createStringLiteral(path)
 }

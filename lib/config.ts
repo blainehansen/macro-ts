@@ -54,12 +54,13 @@ export namespace CompilationEnvironment {
 		{ platform, target }: CompilationEnvironment,
 	): { module: ts.ModuleKind, lib: string[], types?: string[] } {
 		const lib = [] as string[]
-		if (target >= ts.ScriptTarget.ES2015)
-			lib.push('lib.es2015.d.ts')
-		if (target === ts.ScriptTarget.Latest)
-			lib.push(latestLib)
-		else if (target > ts.ScriptTarget.ES2015)
-			lib.push(`lib.${ts.ScriptTarget[target].toLowerCase()}.d.ts`)
+		// TODO I have no idea if this is necessary or not
+		// if (target >= ts.ScriptTarget.ES2015)
+		// 	lib.push('lib.es2015.d.ts')
+		// if (target === ts.ScriptTarget.Latest)
+		// 	lib.push(latestLib)
+		// else if (target > ts.ScriptTarget.ES2015)
+		// 	lib.push(`lib.${ts.ScriptTarget[target].toLowerCase()}.d.ts`)
 
 		// https://www.typescriptlang.org/docs/handbook/tsconfig-json.html#types-typeroots-and-types
 		switch (platform) {
@@ -119,8 +120,8 @@ export namespace MacroTsConfig {
 		return decoder.decode(obj)
 	}
 
-	export function selectPackageForGlob(glob: string, { packages }: MacroTsConfig) {
-		const longestLocation = longestMatchingStem(glob, Object.keys(packages))
+	export function selectPackageForPath(path: string, { packages }: MacroTsConfig) {
+		const longestLocation = longestMatchingStem(path, Object.keys(packages))
 		if (longestLocation === undefined) return undefined
 		return packages[longestLocation]
 	}
