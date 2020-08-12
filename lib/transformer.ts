@@ -141,9 +141,9 @@ function attemptFunctionMacro<S>(
 
 export type DecoratorMacro = (
 	statement: ts.Statement,
-	args: ts.NodeArray<ts.Expression> | undefined,
+	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => ts.Statement[]
+) => { replacement: ts.Statement | undefined, additional: ts.Statement[] }
 export type DecoratorMacroReturn = ReturnType<DecoratorMacro>
 export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'type', 'decorator'> {
 	return { type: 'decorator', execute }
@@ -152,14 +152,14 @@ export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'ty
 function attemptDecoratorMacros<S>(
 	ctx: CompileContext<S>,
 	statement: ts.Statement,
-	// argumentsVisitor: (args: ts.NodeArray<ts.Expression>) => ts.NodeArray<ts.Expression>,
-): DecoratorMacroReturn | undefined {
+): ts.Statement[] | undefined {
 	if (statement.decorators === undefined)
 		return undefined
 
 	const statements = [] as ts.Statement[]
-	for (const decorator of statement.decorators) {
-		const { expression } = decorator
+	let currentStatement = statement as ts.Statement | undefined
+	const decorators = statement.decorators.slice()
+	for (const { expression } of decorators) {
 		if (!(
 			ts.isCallExpression(expression)
 			&& ts.isNonNullExpression(expression.expression)
@@ -168,12 +168,16 @@ function attemptDecoratorMacros<S>(
 		))
 			throw new Error("normal decorators are lame")
 
-		const macro = ctx.macros[expression.expression.expression.expression.text]
+		const macroName = expression.expression.expression.expression.text
+		if (!currentStatement) throw new Error(`Can't perform decorator macro ${macroName}. Previous decorator removed item.`)
+		const macro = ctx.macros[macroName]
 		if (!macro || macro.type !== 'decorator') throw new Error()
-		const additionalStatements = macro.execute(statement, expression.arguments, expression.typeArguments)
-		Array.prototype.push.apply(statements, additionalStatements)
+		const { replacement, additional } = macro.execute(currentStatement, expression.arguments, expression.typeArguments)
+		currentStatement = replacement
+		Array.prototype.push.apply(statements, additional)
 	}
 
+	if (currentStatement) statements.unshift(currentStatement)
 	return statements
 }
 // statements where the creation function includes decorators (implying support)

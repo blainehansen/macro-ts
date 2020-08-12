@@ -126,7 +126,7 @@ import ts = require('typescript')
 type CompilationEnvironment = {
   platform: 'browser' | 'webworker' | 'node' | 'anywhere',
   target: ts.ScriptTarget,
-}
+};
 ```
 
 - `legacybrowser`: `{ platform: 'browser', target: ts.ScriptTarget.ES5 }`
@@ -168,7 +168,7 @@ export type CompilationEnvironment = {
   target: ScriptTarget,
 }
 
-export type ScriptTarget = Exclude<ts.ScriptTarget, ts.ScriptTarget.JSON>
+export type ScriptTarget = Exclude<ts.ScriptTarget, ts.ScriptTarget.JSON>;
 ```
 
 
@@ -293,7 +293,7 @@ export type FunctionMacro = (
   prepend?: ts.Statement[],
   expression: ts.Expression,
   append?: ts.Statement[],
-}
+};
 ```
 
 
@@ -345,7 +345,7 @@ Type signature:
 ```ts
 export type BlockMacro = (
   args: ts.NodeArray<ts.Statement>,
-) => ts.Statement[]
+) => ts.Statement[];
 ```
 
 ### `DecoratorMacro`
@@ -428,7 +428,7 @@ export type DecoratorMacro = (
 ) => {
   original?: ts.Statement,
   additional?: ts.Statement[],
-}
+};
 ```
 
 ### `ImportMacro`
@@ -513,7 +513,7 @@ export type FileContext = {
   workingDir: string,
   currentDir: string, currentFile: string
 }
-export type Dict<T> = { [key: string]: T }
+export type Dict<T> = { [key: string]: T };
 ```
 
 
