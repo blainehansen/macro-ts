@@ -11,67 +11,67 @@ export function basicExpression(r: number | undefined): number | undefined {
 	return undef!!(r) + 1
 }
 
-export function switchStatement(r?: number, f?: number, c?: number): number {
-	switch (required!!(r) + 1) {
-		case required!!(f): return required!!(c)
-		default: return required!!(c)
+export function switchStatement(a?: number, b?: number, c?: number): string | undefined {
+	switch (undef!!(a)) {
+		case undef!!(b): return (undef!!(c) + b).toFixed(0)
+		default: return undef!!(c).toFixed(0)
 	}
 }
 
 export function ifBlock(x?: string, y?: string, z?: string): string | undefined {
-	if (t!!(x).startsWith('a'))
-		return required!!(y)
-	else if (t!!(z).startsWith('a')) {
-		const v = required!!(y) + 'a'
+	if (undef!!(x).startsWith('a'))
+		return undef!!(z)
+	else if (undef!!(y).startsWith('a')) {
+		const v = undef!!(z) + ' a'
 		return v
 	}
 	else
-		return `${required!!(y)} stuff`
+		return `${undef!!(z)} stuff`
 }
 
 
-export function basicFor(arr?: number[], start?: number, step?: number): number | undefined {
-	for (let index = required!!(start); index < required!!(arr).length; index += t!!(step)) {
-		return t!!(arr[index])
+export function basicFor(arr?: number[], start?: number): number | undefined {
+	for (let index = undef!!(start); index < undef!!(arr).length; index++) {
+		return undef!!(arr[index]) + 1
 	}
 	return undefined
 }
 
-export function loneFor(arr?: number[], start?: number, step?: number): number | undefined {
-	for (let index = required!!(start); index < required!!(arr).length; index += t!!(step))
-		return t!!(arr[index])
+export function loneFor(arr?: number[], start?: number): number | undefined {
+	for (let index = undef!!(start); index < undef!!(arr).length; index++)
+		return undef!!(arr[index]) + 1
 	return undefined
 }
 
 
-export function basicForIn(arr?: number[]): number {
+export function basicForIn(arr?: number[]): number | undefined {
 	let sum = 0
-	for (const key in required!!(arr))
+	for (const key in undef!!(arr))
 		sum += arr[key]
 	return sum
 }
 
-export function basicForOf(arr?: number[]): number {
+export function basicForOf(arr?: number[]): number | undefined {
 	let sum = 0
-	for (const n of required!!(arr))
+	for (const n of undef!!(arr))
 		sum += n
 	return sum
 }
 
-export function e(n?: string) {
-	throw new Error(required!!(n))
+export function err(n?: string) {
+	throw new Error(undef!!(n))
 }
 
-export function tryStatement(a?: number[], t?: Error, n?: number): number | undefined {
+export function tryStatement(a?: number[], t?: number, n?: number): number | undefined {
+	let result = 0
 	try {
 		return required!!(a).length
 	}
-	catch (e = undef!!(n)) {
-		return undef!!(n)
+	catch (e) {
+		result += required!!(t)
 	}
-	finally {
-		return undef!!(n)
-	}
+
+	return result + undef!!(n)
 }
 
 
@@ -84,34 +84,29 @@ export class A {
 		this._d = required!!(d)
 	}
 	change(n?: number) {
-		this._d += required!!(n)
+		this._d = required!!(n)
 	}
 	get d(): number {
-		return this._d + required!!(aDef)
+		return this._d + required!!(this.a)
 	}
 	set d(_d: number) {
-		this._d = _d + required!!(aDef)
+		this._d = _d
 	}
 }
-
-// let a: number | undefined = 1
-// with (required!!(a))
-// 	a + 1
 
 export namespace a {
 	let d: number | undefined = 1
-	const n = required!!(d)
-	export function b(n?: number) {
-		return { a: required!!(n) }
+	export function b(a?: number) {
+		return { a: undef!!(a) + undef!!(d) }
 	}
 }
 
-let a: number | undefined = 1
-export default { a: required!!(a) }
+let z: number | undefined = 1
+export default { z: required!!(z) }
 
 import local from yaml!!('./use.yaml')
-export obj from yaml!!('./use.yaml')
+export { default as obj } from yaml!!('./use.yaml')
 
 export function getObj() {
-	return { a: local.a, b: local.b } as { a: string, b: number }
+	return { a: local.a, b: local.b }
 }

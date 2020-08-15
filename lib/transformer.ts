@@ -25,6 +25,7 @@ type CompileContext<S> = {
 	sourceChannel: SourceChannel<S>,
 	handleScript: (script: { path: string, source: string }) => void,
 	readFile: (path: string) => string | undefined,
+	joinPath: (...paths: string[]) => string,
 }
 
 export class Transformer<S> {
@@ -32,10 +33,11 @@ export class Transformer<S> {
 	protected readonly factory: ts.TransformerFactory<ts.SourceFile>
 
 	constructor(
-		macros: Dict<Macro<S>> | undefined,
+		readonly macros: Dict<Macro<S>> | undefined,
 		workingDir: string,
 		sourceChannel: SourceChannel<S>,
 		readFile: (path: string) => string | undefined,
+		joinPath: (...paths: string[]) => string,
 		dirMaker: (sourceFileName: string) => { currentDir: string, currentFile: string },
 	) {
 		this.factory = macros !== undefined && Object.keys(macros).length !== 0 ? context => sourceFile => {
@@ -48,7 +50,7 @@ export class Transformer<S> {
 				handleScript: ({ path, source }) => {
 					this.transformSource(path, source)
 				},
-				readFile,
+				readFile, joinPath,
 			}, sourceFile.statements, context)
 
 			return ts.updateSourceFileNode(sourceFile, statements)
@@ -68,6 +70,11 @@ export class Transformer<S> {
 	transformSourceFile(sourceFile: ts.SourceFile) {
 		const { transformed: [newSourceFile] } = ts.transform(sourceFile, [this.factory])
 		const newSource = printer.printFile(newSourceFile)
+		// console.log('')
+		// console.log('sourceFile.fileName:', sourceFile.fileName)
+		// console.log('newSource:')
+		// console.log(newSource)
+		// console.log('')
 		this.cache.set(sourceFile.fileName, newSource)
 		return newSource
 	}
@@ -134,7 +141,9 @@ function attemptFunctionMacro<S>(
 		return undefined
 
 	const macro = ctx.macros[node.expression.expression.expression.text]
-	if (!macro || macro.type !== 'function') throw new Error()
+	if (!macro || macro.type !== 'function') {
+		throw new Error(printNodes([node]))
+	}
 	return macro.execute(argumentsVisitor(node.arguments), node.typeArguments)
 }
 
@@ -143,7 +152,7 @@ export type DecoratorMacro = (
 	statement: ts.Statement,
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => { replacement: ts.Statement | undefined, additional: ts.Statement[] }
+) => { prepend?: ts.Statement[], replacement: ts.Statement | undefined, append?: ts.Statement[] }
 export type DecoratorMacroReturn = ReturnType<DecoratorMacro>
 export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'type', 'decorator'> {
 	return { type: 'decorator', execute }
@@ -156,9 +165,10 @@ function attemptDecoratorMacros<S>(
 	if (statement.decorators === undefined)
 		return undefined
 
-	const statements = [] as ts.Statement[]
 	let currentStatement = statement as ts.Statement | undefined
 	const decorators = statement.decorators.slice()
+	const prepends = [] as ts.Statement[]
+	const appends = [] as ts.Statement[]
 	for (const { expression } of decorators) {
 		if (!(
 			ts.isCallExpression(expression)
@@ -172,13 +182,13 @@ function attemptDecoratorMacros<S>(
 		if (!currentStatement) throw new Error(`Can't perform decorator macro ${macroName}. Previous decorator removed item.`)
 		const macro = ctx.macros[macroName]
 		if (!macro || macro.type !== 'decorator') throw new Error()
-		const { replacement, additional } = macro.execute(currentStatement, expression.arguments, expression.typeArguments)
+		const { prepend, replacement, append } = macro.execute(currentStatement, expression.arguments, expression.typeArguments)
 		currentStatement = replacement
-		Array.prototype.push.apply(statements, additional)
+		if (prepend) Array.prototype.push.apply(prepends, prepend)
+		if (append) Array.prototype.push.apply(appends, append)
 	}
 
-	if (currentStatement) statements.unshift(currentStatement)
-	return statements
+	return prepends.concat(currentStatement ? [currentStatement] : []).concat(appends)
 }
 // statements where the creation function includes decorators (implying support)
 // FunctionDeclaration
@@ -206,7 +216,7 @@ export type FileContext = {
 	currentDir: string, currentFile: string
 }
 
-export type ImportMacro<S> = (
+export type ImportMacro<S = undefined> = (
 	ctx: FileContext,
 	targetPath: string,
 	targetSource: string,
@@ -215,12 +225,12 @@ export type ImportMacro<S> = (
 	sources?: Dict<S>,
 }
 export type ImportMacroReturn<S> = ReturnType<ImportMacro<S>>
-export function ImportMacro<S>(execute: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
+export function ImportMacro<S = undefined>(execute: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
 	return { type: 'import', execute }
 }
 
 function attemptImportMacro<S>(
-	{ macros, fileContext, sourceChannel, handleScript, readFile }: CompileContext<S>,
+	{ macros, fileContext, sourceChannel, handleScript, readFile, joinPath }: CompileContext<S>,
 	declaration: ts.ImportDeclaration | ts.ExportDeclaration,
 ): ts.StringLiteral | undefined {
 	const moduleSpecifier = declaration.moduleSpecifier
@@ -242,15 +252,17 @@ function attemptImportMacro<S>(
 	const macro = macros[moduleSpecifier.expression.expression.expression.text]
 	if (!macro || macro.type !== 'import') throw new Error()
 
-	const path = pathSpecifier.text
-	const source = readFile(path)
+	const targetPath = pathSpecifier.text
+	const { workingDir, currentDir } = fileContext
+	const fullPath = joinPath(workingDir, currentDir, targetPath)
+	const source = readFile(fullPath)
 	if (source === undefined) throw new Error()
 
-	const { sources = {}, statements  } = macro.execute(fileContext, path, source)
+	const { sources = {}, statements  } = macro.execute(fileContext, targetPath, source)
 	sourceChannel(sources)
-	handleScript({ path: path + '.ts', source: printNodes(statements) })
+	handleScript({ path: fullPath + '.ts', source: printNodes(statements) })
 
-	return ts.createStringLiteral(path)
+	return ts.createStringLiteral(targetPath)
 }
 
 

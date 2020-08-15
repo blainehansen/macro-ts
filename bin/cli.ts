@@ -44,7 +44,6 @@ function isNodeExported(node: ts.Node): boolean {
 
 function createInterceptingHost(
 	workingDir: string,
-	// transformedTsSources: Map<string, string>,
 	transformer: Transformer<unknown>,
 	compilerOptions: ts.CompilerOptions,
 ): ts.CompilerHost {
@@ -104,7 +103,6 @@ export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.D
 
 type CompileArgs = {
 	entryFiles: string[],
-	// emitOptions: {}[],
 	outDir: string,
 	platform: CompilationEnvironment['platform'],
 	target: ScriptTarget,
@@ -245,14 +243,9 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 		const currentFile = nodepath.basename(sourceFileName)
 		return { currentDir, currentFile }
 	}
-	const dummyTransformer = new Transformer<undefined>(undefined, workingDir, () => {}, undefReadFile, dirMaker)
+	const dummyTransformer = new Transformer<undefined>(undefined, workingDir, () => {}, undefReadFile, nodepath.join, dirMaker)
 	dummyTransformer.transformSourceFile(newMacrosSourceFile)
-	const macrosCompilerHost = createInterceptingHost(
-		workingDir,
-		// new Map([[macrosEntry, printer.printFile(newMacrosSourceFile)]]),
-		dummyTransformer,
-		macrosOptions,
-	)
+	const macrosCompilerHost = createInterceptingHost(workingDir, dummyTransformer, macrosOptions)
 	const macrosProgram = ts.createProgram([macrosEntry], macrosOptions, macrosCompilerHost)
 	fs.rmdirSync(macrosOptions.outDir, { recursive: true })
 	const emitResult = macrosProgram.emit()
@@ -264,7 +257,7 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 	const macros: Dict<Macro> = require(macrosPath).macros
 	if (Object.keys(macros).length === 0) return undefined
 
-	return new Transformer<undefined>(macros, workingDir, () => {}, undefReadFile, dirMaker)
+	return new Transformer<undefined>(macros, workingDir, () => {}, undefReadFile, nodepath.join, dirMaker)
 }
 
 
@@ -355,6 +348,8 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 	let projectVersion = 1
 	const scriptSnapshotCache = new Map<string, ts.IScriptSnapshot>()
 
+	const cachedFileExists = cachedLookup(ts.sys.fileExists)
+
 	const registry = ts.createDocumentRegistry(ts.sys.useCaseSensitiveFileNames, workingDir)
 	const service = ts.createLanguageService({
 		getProjectVersion: () => String(projectVersion),
@@ -363,6 +358,10 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 			const version = fileVersions.get(fileName)
 			return version ? version.toString() : ''
 		},
+		readFile: cachedLookup(ts.sys.readFile),
+		fileExists(fileName: string) {
+			return (transformer ? transformer.has(fileName) : undefined) || cachedFileExists(fileName)
+		},
 		getScriptSnapshot(fileName: string) {
 			const cachedScriptSnapshot = scriptSnapshotCache.get(fileName)
 			if (cachedScriptSnapshot !== undefined) return cachedScriptSnapshot
@@ -370,7 +369,7 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 			const fileContents = (transformer ? transformer.get(fileName) : undefined) || undefReadFile(fileName)
 			if (fileContents === undefined) return undefined
 
-			const finalContents = transformer
+			const finalContents = transformer && !fileName.includes('node_modules')
 				? transformer.transformSource(fileName, fileContents)
 				: fileContents
 
@@ -378,10 +377,8 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 			scriptSnapshotCache.set(fileName, snapshot)
 			return snapshot
 		},
-		readFile: cachedLookup(ts.sys.readFile),
 		// readDirectory: ts.sys.readDirectory,
 		getDirectories: cachedLookup(ts.sys.getDirectories),
-		fileExists: cachedLookup(ts.sys.fileExists),
 		directoryExists: cachedLookup(ts.sys.directoryExists),
 		getNewLine: () => ts.sys.newLine,
 		useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
@@ -405,8 +402,19 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 		const output = service.getEmitOutput(fileName)
 		const diagnostics = service.getSemanticDiagnostics(fileName).concat(service.getSyntacticDiagnostics(fileName))
 
-		if (diagnostics.length)
+		if (diagnostics.length) {
+			const program = service.getProgram()!
+			let fileText = ''
+			for (const sourceFile of program.getSourceFiles()) {
+				if (sourceFile.isDeclarationFile || sourceFile.fileName !== fileName) continue
+				fileText = printer.printFile(sourceFile)
+				break
+			}
+			console.error('fileName:', fileName)
+			console.error(fileText)
+			console.error('')
 			reportDiagnostics(workingDir, diagnostics)
+		}
 
 		if (output.emitSkipped)
 			throw new TypeError(`${nodepath.relative(workingDir, fileName)}: Emit skipped`)
@@ -438,16 +446,31 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 	}
 
 	const jsHandler = require.extensions['.js']
-	require.extensions['.ts'] = function(mod: any, filename) {
-		if (/(?:^|\/)node_modules\//.test(filename)) return jsHandler(mod, filename)
+	let jsCompile = undefined as Function | undefined
+	require.extensions['.ts'] = function(mod: any, fileName) {
+		if (/(?:^|\/)node_modules\//.test(fileName)) return jsHandler(mod, fileName)
 
-		const originalModuleCompile = mod._compile
+		const originalModuleCompile = jsCompile = mod._compile
 		mod._compile = function(code: string, fileName: string) {
 			return originalModuleCompile.call(this, compileWithService(code, fileName), fileName)
 		}
 
-		return jsHandler(mod, filename)
+		return jsHandler(mod, fileName)
 	}
+
+	if (transformer && transformer.macros)
+		for (const [extension, macro] of Object.entries(transformer.macros)) {
+			if (macro.type !== 'import') continue
+
+			require.extensions[`.${extension}`] = function(mod: any, fileName) {
+				mod._compile = function(code: string, fileName: string) {
+					if (!jsCompile) throw new Error()
+					return jsCompile.call(this, compileWithService(code, fileName + '.ts'), fileName)
+				}
+
+				return jsHandler(mod, fileName)
+			}
+		}
 
 	return service
 }

@@ -64,7 +64,7 @@ export const yo = DecoratorMacro(statement => {
 		statement, undefined, statement.modifiers, statement.asteriskToken, ts.createIdentifier(newName),
 		statement.typeParameters, statement.parameters, statement.type, statement.body,
 	)
-	return { replacement, additional: [] }
+	return { replacement }
 })
 
 
