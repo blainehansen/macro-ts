@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 import * as c from '@ts-std/codec'
-import { Result, Ok, Err } from '@ts-std/monads'
+import { Ok, Err } from '@ts-std/monads'
 
 import { NonEmptyOrSingle, Dict, UnboxArray, exec, longestMatchingStem } from './utils'
 
@@ -19,7 +19,7 @@ export type CompilationEnvironment = {
 }
 export namespace CompilationEnvironment {
 	const fullDecoder = c.object<CompilationEnvironment>({
-		platform: c.literals('browser', 'node', 'anywhere'),
+		platform: c.literals('browser', 'webworker', 'node', 'anywhere'),
 		target: ScriptTarget,
 	})
 
@@ -42,6 +42,10 @@ export namespace CompilationEnvironment {
 		return Err(`invalid environment shorthand: ${env}`)
 	})
 
+	export function key({ platform, target }: CompilationEnvironment) {
+		return `${platform}-${ts.ScriptTarget[target].toLowerCase()}`
+	}
+
 	const latestLib = exec((): string => {
 		for (const key of Object.keys(ts.ScriptTarget)) {
 			const value = ts.ScriptTarget[key as keyof typeof ts.ScriptTarget]
@@ -54,13 +58,12 @@ export namespace CompilationEnvironment {
 		{ platform, target }: CompilationEnvironment,
 	): { module: ts.ModuleKind, lib: string[], types?: string[] } {
 		const lib = [] as string[]
-		// TODO I have no idea if this is necessary or not
-		// if (target >= ts.ScriptTarget.ES2015)
-		// 	lib.push('lib.es2015.d.ts')
-		// if (target === ts.ScriptTarget.Latest)
-		// 	lib.push(latestLib)
-		// else if (target > ts.ScriptTarget.ES2015)
-		// 	lib.push(`lib.${ts.ScriptTarget[target].toLowerCase()}.d.ts`)
+		if (target >= ts.ScriptTarget.ES2015)
+			lib.push('lib.es2015.d.ts')
+		if (target === ts.ScriptTarget.Latest)
+			lib.push(latestLib)
+		else if (target > ts.ScriptTarget.ES2015)
+			lib.push(`lib.${ts.ScriptTarget[target].toLowerCase()}.d.ts`)
 
 		// https://www.typescriptlang.org/docs/handbook/tsconfig-json.html#types-typeroots-and-types
 		switch (platform) {
@@ -84,8 +87,7 @@ const RawMacroTsConfigDecoder = c.object({
 		location: c.string,
 		entry: StringNonEmptyOrSingle,
 		exclude: c.optional(StringNonEmptyOrSingle),
-		// environment: NonEmptyOrSingle.decoder(CompilationEnvironment.decoder),
-		environment: CompilationEnvironment.decoder,
+		environment: NonEmptyOrSingle.decoder(CompilationEnvironment.decoder),
 		dev: c.optional(c.boolean),
 	})),
 })
@@ -107,14 +109,6 @@ export namespace MacroTsConfig {
 
 		return Ok({ ...rawConfig, packages })
 	})
-
-	export function expect(result: Result<MacroTsConfig> | undefined): MacroTsConfig {
-		if (result === undefined)
-			throw new Error("undefined config")
-		if (result.is_err())
-			throw new Error("Invalid config:\n" + result.error)
-		return result.value
-	}
 
 	export function decode(obj: unknown) {
 		return decoder.decode(obj)

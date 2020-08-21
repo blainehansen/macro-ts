@@ -1,19 +1,8 @@
 {
 	"compilerOptions": {
 		"strict": true,
-		"declaration": true,
-		"sourceMap": true,
 		"target": "esnext",
 		"module": "none",
-		"moduleResolution": "node",
-		"outDir": "dist",
-		"lib": ["esnext", "esnext.intl"]
-	},
-	"include": [
-		"bin/**/*"
-	],
-	"exclude": [
-		"node_modules",
-		"**/*.test.ts"
-	]
+		"moduleResolution": "node"
+	}
 }

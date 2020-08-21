@@ -2,7 +2,8 @@ macros = '.macros.ts'
 
 [[packages]]
 location = 'app'
-entry = 'main.ts'
+entry = '**/*.ts'
+exclude = '**/*.test.ts'
 environment = 'modernbrowser'
 
 [[packages]]

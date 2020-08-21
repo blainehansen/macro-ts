@@ -1,45 +1,53 @@
 {
-  "name": "macro-ts",
-  "version": "0.1.0",
-  "description": "",
-  "bin": "./dist/cli.js",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "dev": "ts-node lib/cli.ts",
+	"name": "@blainehansen/macro-ts",
+	"version": "0.1.0",
+	"description": "An ergonomic typescript compiler that enables typesafe syntactic macros.",
+	"bin": ".macro-ts/dist/node-latest/bin/cli.js",
+	"main": ".macro-ts/dist/anywhere-latest/lib/index.js",
+	"types": ".macro-ts/dist/anywhere-latest/lib/index.d.ts",
+	"files": [".macro-ts/dist"],
+	"scripts": {
+		"dev": "ts-node lib/message.ts",
+		"ts:ast": "ts-creator lab/_generate.from.ts --use-tabs true --trailing-comma 'all' -o lab/_generate.to.ts",
+		"build": "./build.sh",
 
-    "clean": "rm -rf dist",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
-    "build:bin": "tsc -p tsconfig.json",
-    "test": "npm run test:examples",
-    "test:examples": "npm run build:bin && mocha -r ./dist/bin/register examples/use.test.ts",
+		"test": "npm run test:examples",
+		"test:examples": "mocha -r ./.macro-ts/dist/register examples/use.test.ts",
 
-    "ts:ast": "ts-creator lab/_generate.from.ts --use-tabs true --trailing-comma 'all' -o lab/_generate.to.ts"
-  },
-  "author": "",
-  "license": "MIT",
-  "devDependencies": {
-    "@types/chai": "^4.2.12",
-    "@types/js-yaml": "^3.12.5",
-    "@types/mocha": "^8.0.1",
-    "@types/node": "^14.0.20",
-    "chai": "^4.2.0",
-    "js-yaml": "^3.14.0",
-    "mocha": "^8.1.1",
-    "ts-creator": "^1.2.5",
-    "ts-node": "^8.10.2",
-    "typescript": "^3.9.6"
-  },
-  "dependencies": {
-    "@iarna/toml": "^2.2.5",
-    "@ts-std/codec": "^0.3.0",
-    "@ts-std/monads": "^1.2.0",
-    "@types/source-map-support": "^0.5.2",
-    "arg": "^4.1.3",
-    "fast-glob": "^3.2.4",
-    "source-map-support": "^0.5.19"
-  }
+		"preversion": "npm run build && npm test",
+		"postversion": "git push origin master && git push origin master --tags && npm publish"
+	},
+	"keywords": ["typescript", "typesafe", "compiler", "convenient", "ergonomic", "check", "ts-node", "node", "run", "syntactic", "transform", "loader", "macro", "macro", "rust"],
+	"author": {
+		"name": "Blaine Hansen",
+		"email": "faichenshing@gmail.com",
+		"url": "https://blainehansen.co"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/blainehansen/macro-ts"
+	},
+	"license": "MIT",
+	"devDependencies": {
+		"@types/chai": "^4.2.12",
+		"@types/js-yaml": "^3.12.5",
+		"@types/mocha": "^8.0.1",
+		"@types/node": "^14.0.20",
+		"@types/source-map-support": "^0.5.2",
+		"chai": "^4.2.0",
+		"js-yaml": "^3.14.0",
+		"mocha": "^8.1.1",
+		"ts-creator": "^1.2.5",
+		"ts-node": "^8.10.2",
+		"typescript": "^3.9.6"
+	},
+	"dependencies": {
+		"@iarna/toml": "^2.2.5",
+		"@ts-std/codec": "^0.3.0",
+		"@ts-std/monads": "^1.2.0",
+		"arg": "^4.1.3",
+		"chalk": "^4.1.0",
+		"fast-glob": "^3.2.4",
+		"source-map-support": "^0.5.19"
+	}
 }

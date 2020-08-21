@@ -9,6 +9,14 @@ export function exec<T>(fn: () => T): T {
 	return fn()
 }
 
+export function setExtend<T, U>(a: Set<T>, b: U[]): Set<T | U> {
+	const union = new Set<T | U>(a)
+	for (const item of b)
+		union.add(item)
+	return union
+}
+
+
 export type UnionKeys<T> = T extends T ? keyof T : never
 export type OmitVariants<U, K extends UnionKeys<U>, V extends U[K]> = U extends U
 	? U[K] extends V ? never : U

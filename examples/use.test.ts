@@ -2,7 +2,7 @@ import 'mocha'
 import { expect } from 'chai'
 import {
 	add, yo_yo,
-	basicExpression, switchStatement, ifBlock, basicFor, loneFor, basicForIn, basicForOf, err, tryStatement,
+	basicExpression, switchStatement, ifBlock, basicFor, loneFor, basicForIn, basicForOf, err, tryStatement, useRepeat,
 	A, a, obj, getObj,
 } from './use'
 import aObj from './use'
@@ -99,6 +99,12 @@ describe('examples', () => {
 		expect(tryStatement([], undefined, undefined) === 0).true
 		expect(tryStatement(undefined, 1, undefined) === undefined).true
 		expect(tryStatement(undefined, 1, 1) === 2).true
+	})
+
+	it('useRepeat', () => {
+		expect(useRepeat(0) === 0).true
+		expect(useRepeat(1) === 4).true
+		expect(useRepeat(2) === 8).true
 	})
 
 	it('A', () => {

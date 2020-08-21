@@ -2,12 +2,14 @@ import ts = require('typescript')
 import {
   FunctionMacro, BlockMacro,
   DecoratorMacro, ImportMacro,
-} from '../lib/transformer'
+} from '../lib/'
 
-export const required = FunctionMacro(args => {
-	if (args.length !== 1) throw new Error("some helpful message")
+export const required = FunctionMacro((ctx, args) => {
+	if (args.length !== 1)
+		return ctx.TsNodeErr(args, 'Incorrect arguments', 'The "required" macro accepts exactly one argument.')
+
 	const target = args[0]
-	return {
+	return ctx.Ok({
 		prepend: [ts.createIf(
 			ts.createBinary(
 				target,
@@ -21,13 +23,15 @@ export const required = FunctionMacro(args => {
 		)],
 		expression: target,
 		append: [],
-	}
+	})
 })
 
-export const undef = FunctionMacro(args => {
-	if (args.length !== 1) throw new Error("some helpful message")
+export const undef = FunctionMacro((ctx, args) => {
+	if (args.length !== 1)
+		return ctx.TsNodeErr(args, 'Incorrect arguments', 'The "undef" macro accepts exactly one argument.')
+
 	const target = args[0]
-	return {
+	return ctx.Ok({
 		prepend: [ts.createIf(
 			ts.createBinary(
 				target,
@@ -39,68 +43,74 @@ export const undef = FunctionMacro(args => {
 		)],
 		expression: target,
 		append: [],
-	}
+	})
 })
 
-export const ok = FunctionMacro(args => {
-	if (args.length !== 1) throw new Error()
+export const ok = FunctionMacro((ctx, args) => {
+	if (args.length !== 1)
+		return ctx.TsNodeErr(args, 'Incorrect arguments', 'The "ok" macro accepts exactly one argument.')
 	const target = args[0]
-	return {
+	return ctx.Ok({
 		prepend: [ts.createIf(
 			ts.createCall(ts.createPropertyAccess(target, ts.createIdentifier('is_err')), undefined, []),
 			ts.createReturn(target), undefined,
 		)],
 		expression: ts.createPropertyAccess(target, ts.createIdentifier('value')),
 		append: [],
-	}
+	})
 })
 
-export const yo = DecoratorMacro(statement => {
-	if (!ts.isFunctionDeclaration(statement)) throw new Error()
-	if (statement.name === undefined) throw new Error()
+export const yo = DecoratorMacro((ctx, statement) => {
+	if (!ts.isFunctionDeclaration(statement))
+		return ctx.TsNodeErr(statement, 'Not a function', 'The "yo" macro can only decorate functions.')
+	if (statement.name === undefined)
+		return ctx.TsNodeErr(statement, 'No function name', 'The "yo" macro can only decorate functions with a name.')
 
 	const newName = statement.name.text + '_yo'
 	const replacement = ts.updateFunctionDeclaration(
 		statement, undefined, statement.modifiers, statement.asteriskToken, ts.createIdentifier(newName),
 		statement.typeParameters, statement.parameters, statement.type, statement.body,
 	)
-	return { replacement }
+	return ctx.Ok({ replacement })
 })
 
 
-export const repeat = BlockMacro(args => {
-	const [times, statement] = args
+export const repeat = BlockMacro((ctx, inputStatements) => {
+	const [times, statement] = inputStatements
 	if (
 		!times || !statement
 		|| !ts.isExpressionStatement(times)
 		|| !ts.isBinaryExpression(times.expression)
 		|| !ts.isIdentifier(times.expression.left)
-		|| !ts.isIdentifier(times.expression.left)
 		|| times.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
 		|| !ts.isNumericLiteral(times.expression.right)
-	) throw new Error("some helpful message")
+	)
+		return ctx.TsNodeErr(inputStatements, 'Invalid repeat', `The "repeat" macro isn't being used correctly.`)
 
 	const repetitions = parseInt(times.expression.right.text)
 	const statements = [...Array(repetitions)].map(() => statement)
-	return statements
+	return ctx.Ok(statements)
 })
 
 
-export const creator = DecoratorMacro(statement => {
+export const creator = DecoratorMacro((ctx, statement) => {
   if (
     !ts.isTypeAliasDeclaration(statement)
     || !ts.isTypeLiteralNode(statement.type)
-  ) throw new Error("some helpful message")
+  )
+		return ctx.TsNodeErr(statement, 'Not a type literal', `The "creator" macro isn't being used correctly.`)
 
-  const members = statement.type.members.map(member => {
+	const members: { name: ts.Identifier, type: ts.TypeNode }[] = []
+	for (const member of statement.type.members) {
     if (
       !ts.isPropertySignature(member)
       || !member.type
       || !ts.isIdentifier(member.name)
-    ) throw new Error("some helpful message")
+    )
+			return ctx.TsNodeErr(member, 'Invalid member', `The "creator" macro requires all members to be simple.`)
 
-    return { name: member.name, type: member.type }
-  })
+    members.push({ name: member.name, type: member.type })
+	}
 
   const parameters = members.map(({ name, type }) => {
     return ts.createParameter(
@@ -124,15 +134,15 @@ export const creator = DecoratorMacro(statement => {
     ], true),
   )
 
-  return { replacement: statement, additional: [creator] }
+  return ctx.Ok({ replacement: statement, additional: [creator] })
 })
 
 
 import YAML = require('js-yaml')
-export const yaml = ImportMacro((_ctx, _targetPath, targetSource) => {
+export const yaml = ImportMacro((ctx, targetSource, targetPath) => {
   const obj = YAML.safeLoad(targetSource)
   if (typeof obj !== 'object')
-    throw new Error("some helpful message")
+  	return ctx.Err(targetPath, 'Invalid yaml', `The "yaml" macro requires the yaml contents to be an object.`)
 
   const properties = Object.entries(obj).map(([key, value]) => {
     return ts.createPropertyAssignment(
@@ -147,5 +157,5 @@ export const yaml = ImportMacro((_ctx, _targetPath, targetSource) => {
     undefined, ts.createObjectLiteral(properties, false),
   )
 
-  return { statements: [statement] }
+  return ctx.Ok({ statements: [statement] })
 })

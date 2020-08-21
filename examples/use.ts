@@ -74,6 +74,15 @@ export function tryStatement(a?: number[], t?: number, n?: number): number | und
 	return result + undef!!(n)
 }
 
+export function useRepeat(a: number) {
+	let n = 0
+	repeat!!;{
+		times = 4
+		n += a
+	}
+	return n
+}
+
 
 let aDef: number | undefined = 1
 export class A {

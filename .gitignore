@@ -57,8 +57,7 @@ typings/
 # dotenv environment variables file
 .env
 
-dist
-target
+.macro-ts
 
 .local*
 lab/_generate.from.ts

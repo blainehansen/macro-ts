@@ -1,19 +1,25 @@
 # `macro-ts`
 
-An ergonomic compiler for typescript that allows typesafe and extremely powerful syntactic macros.
+An ergonomic typescript compiler that enables typesafe syntactic macros.
 
 Write code like this:
 
 ```ts
+// an import macro
 import ProductDetails from sql!!('./productDetails.sql')
 
+// a block macro
 db!!;{
-  config = { port: 5432, host: 'db', user: 'sterling', password: 'guest' }
+  port = 5432; host = 'db'
+  user = DB_ENV_USER
+  password = DB_ENV_PASS,
 }
 
+// a decorator macro
 @get!!('/product/{id}')
 async function productDetails(id: number) {
   const queryResult = await db.query(ProductDetails.compile(id))
+  // a function macro
   const products = required!!(queryResult)
   const count = products.length
   return { products, count }
@@ -23,42 +29,37 @@ async function productDetails(id: number) {
 and have it transformed into something like the following, *and then fully typechecked*:
 
 ```ts
-// import macros can produce "virtual" typescript files
-// by inspecting the contents of real files
+// import macros can inspect the contents of real files
+// and produce "virtual" typescript files
 import ProductDetails from './productDetails.sql.ts'
 
 // block macros can inspect a list of statements
 // and expand to any other list of statements
-namespace db {
-  import { Pool } from 'pg'
-  const pool = new Pool({ port: 5432, host: 'db', user: 'sterling', password: 'guest' })
-  type QueryObject<T> = {
-    text: string,
-    values?: unknown[],
-    type: T | undefined, // a potential type inference hack
-  }
-  export async function query<T>(query: QueryObject<T>): T | null {
-    const client = await pool.connect()
-    const queryResult = await client.query(query.text, query.values)
-    client.release()
-    return queryResult
-  }
-}
+import driver from 'some-database-driver-library'
+const dbUser = process.env.DB_ENV_USER
+if (!dbUser) throw new Error(`DB_ENV_USER isn't set`)
+const dbPassword = process.env.DB_ENV_PASS
+if (!dbPassword) throw new Error(`DB_ENV_PASS isn't set`)
+const db = new driver.Pool({
+  port: 5432, host: 'db',
+  user: dbUser, password: dbPassword,
+})
 
-// a decorator macro can inspect whatever it's attached to
-// and expand to any list of typescript statements
+// a decorator macro can inspect the statement it's attached to
+// choose to replace that statement
+// and provide additional statements to place around it
 import * as v from 'some-validation-library'
 const productDetailsParamsValidator = v.object({ id: v.number })
-async function productDetails(params: { [key: string]: string }) {
+async function productDetails(params: { [key: string]: unknown }) {
   const paramsResult = productDetailsParamsValidator.validate(params)
   if (paramsResult === null)
     throw new v.ValidationError(params)
   const { id } = paramsResult
 
   const queryResult = await db.query(ProductDetails.compile(id))
-  // function macros can inspect the expression they're given
-  // and return any expression to replace it
-  // as well as provide additional statements to insert around the expression
+  // function macros can inspect the args it's passed
+  // return any expression to replace the function call
+  // and provide additional statements to place around it
   if (queryResult === null)
     throw new Error()
   const products = queryResult.value
@@ -73,7 +74,7 @@ Typesafe macros can unlock huge productivity gains for any development team. Enj
 
 ## Quickstart
 
-You can quickly run or check code without a project configuration file. This method is appropriate for rapid prototyping or experimentation, will use the `anywhere` compilation environment, and will try to load macros from a `.macros.ts` file in the current working directory.
+You can quickly run or check code without a project configuration file. This method is appropriate for rapid prototyping or experimentation, will use the `anywhere` compilation environment, and will optionally attempt to to load macros from a `.macros.ts` file in the current working directory.
 
 ```bash
 npx macro-ts run someScript.ts
@@ -93,7 +94,9 @@ macros = '.macros.ts'
 [[packages]]
 location = 'app'
 entry = 'main.ts'
-environment = 'modernbrowser'
+# you can give a package
+# more than one compilation environment
+environment = ['modernbrowser', 'legacybrowser']
 
 [[packages]]
 location = 'bin'
@@ -137,7 +140,7 @@ type CompilationEnvironment = {
 
 ## Dev mode
 
-By default these settings are used when typchecking: `noUnusedParameters: true`, `noUnusedLocals: true`, `preserveConstEnums: false`, and `removeComments: true`.
+By default these settings are used when typechecking: `noUnusedParameters: true`, `noUnusedLocals: true`, `preserveConstEnums: false`, and `removeComments: true`.
 
 These settings are all more appropriate for a release quality build. Both the config file and the cli however support a "dev" mode that inverts all these settings to their more lenient form.
 
@@ -151,17 +154,19 @@ export type MacroTsConfig = {
   macros?: string,
   packages: {
     location: string,
-    entry: string | [string, ...string],
-    exclude?: string | [string, ...string],
-    environment:
-      | CompilationEnvironment
-      | 'legacybrowser' | 'modernbrowser'
-      | 'webworker'
-      | 'node'
-      | 'anywhere'
+    entry: string | [string, ...string[]],
+    exclude?: string | [string, ...string[]],
+    environment: ConfigEnv | [ConfigEnv, ...ConfigEnv[]],
     dev?: boolean,
   }[]
 }
+
+type ConfigEnv =
+  | CompilationEnvironment
+  | 'legacybrowser' | 'modernbrowser'
+  | 'webworker'
+  | 'node'
+  | 'anywhere'
 
 export type CompilationEnvironment = {
   platform: 'browser' | 'webworker' | 'node' | 'anywhere',
@@ -228,12 +233,28 @@ import {
   FunctionMacro, BlockMacro,
   DecoratorMacro, ImportMacro,
 } from 'macro-ts'
+
 export const macros = {
   f: FunctionMacro(/* ... */),
   b: BlockMacro(/* ... */),
   d: DecoratorMacro(/* ... */),
   i: ImportMacro(/* ... */),
 }
+```
+
+All macros are given a `MacroContext` object that contains helper functions for returning values from macros. These helpers basically all deal with `SpanResult<T>`, a type that signifies either that the macro was successful and is returning a value (using `Ok`), or that it failed and is returning some errors to show to the user (using `TsNodeErr` or `Err`). `TsNodeErr` is especially useful, since it allows you to give any typescript `Node` that will be highlighted as the source of the error, along with text describing it.
+
+`tsNodeWarn` and `warn` are also provided to allow you to give warnings to the user that don't necessarily require failure.
+
+```ts
+import ts = require('typescript')
+export type MacroContext = {
+  Ok: <T>(value: T) => SpanResult<T>,
+  TsNodeErr: (node: ts.TextRange, title: string, ...paragraphs: string[]) => SpanResult<any>,
+  Err: (fileName: string, title: string, ...paragraphs: string[]) => SpanResult<any>,
+  tsNodeWarn: (node: ts.TextRange, title: string, ...paragraphs: string[]) => void,
+  warn: (fileName: string, title: string, ...paragraphs: string[]) => void,
+};
 ```
 
 The `macro-ts` cli expects the macros file to export a dictionary named `macros`. The `macro-ts` library provides the `FunctionMacro`, `BlockMacro`, `DecoratorMacro`, and `ImportMacro` constructor functions to make writing macros easier.
@@ -260,10 +281,14 @@ import ts = require('typescript')
 import { FunctionMacro } from './lib/transformer'
 
 export const macros = {
-  required: FunctionMacro(args => {
-    if (args.length !== 1) throw new Error("some helpful message")
+  required: FunctionMacro((ctx, args) => {
+    if (args.length !== 1) return ctx.TsNodeErr(
+      args, 'Incorrect arguments',
+      'The "required" macro accepts exactly one argument.',
+    )
+
     const target = args[0]
-    return {
+    return ctx.Ok({
       prepend: [ts.createIf(
         ts.createBinary(
           target,
@@ -277,7 +302,7 @@ export const macros = {
       )],
       expression: target,
       append: [],
-    }
+    })
   }),
 }
 ```
@@ -287,13 +312,14 @@ Type signature:
 ```ts
 import ts = require('typescript')
 export type FunctionMacro = (
+  ctx: MacroContext,
   args: ts.NodeArray<ts.Expression>,
   typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => {
+) => SpanResult<{
   prepend?: ts.Statement[],
   expression: ts.Expression,
   append?: ts.Statement[],
-};
+}>;
 ```
 
 
@@ -321,21 +347,23 @@ import ts = require('typescript')
 import { BlockMacro } from './lib/transformer'
 
 export const macros = {
-  repeat: BlockMacro(args => {
-    const [times, statement] = args
+  repeat: BlockMacro((ctx, inputStatements) => {
+    const [times, statement] = inputStatements
     if (
       !times || !statement
       || !ts.isExpressionStatement(times)
       || !ts.isBinaryExpression(times.expression)
       || !ts.isIdentifier(times.expression.left)
-      || !ts.isIdentifier(times.expression.left)
-      || times.expression.operatorToken !== ts.SyntaxKind.EqualsToken
+      || times.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
       || !ts.isNumericLiteral(times.expression.right)
-    ) throw new Error("some helpful message")
+    ) return ctx.TsNodeErr(
+      inputStatements, 'Invalid repeat',
+      `The "repeat" macro isn't being used correctly.`,
+    )
 
     const repetitions = parseInt(times.expression.right.text)
     const statements = [...Array(repetitions)].map(() => statement)
-    return statements
+    return ctx.Ok(statements)
   }),
 }
 ```
@@ -343,9 +371,11 @@ export const macros = {
 Type signature:
 
 ```ts
+import ts = require('typescript')
 export type BlockMacro = (
+  ctx: MacroContext,
   args: ts.NodeArray<ts.Statement>,
-) => ts.Statement[];
+) => SpanResult<ts.Statement[]>;
 ```
 
 ### `DecoratorMacro`
@@ -375,21 +405,28 @@ import ts = require('typescript')
 import { DecoratorMacro } from './lib/transformer'
 
 export const macros = {
-  creator: DecoratorMacro(statement => {
+  creator: DecoratorMacro((ctx, statement) => {
     if (
       !ts.isTypeAliasDeclaration(statement)
-      || !ts.isTypeLiteralNode(statement)
-    ) throw new Error("some helpful message")
+      || !ts.isTypeLiteralNode(statement.type)
+    ) return ctx.TsNodeErr(
+      statement, 'Not a type literal',
+      `The "creator" macro isn't being used correctly.`,
+    )
 
-    const members = statement.members.map(member => {
+    const members: { name: ts.Identifier, type: ts.TypeNode }[] = []
+    for (const member of statement.type.members) {
       if (
         !ts.isPropertySignature(member)
         || !member.type
         || !ts.isIdentifier(member.name)
-      ) throw new Error("some helpful message")
+      ) return ctx.TsNodeErr(
+        member, 'Invalid member',
+        `The "creator" macro requires all members to be simple.`,
+      )
 
-      return { name: member.name, type: member.type }
-    })
+      members.push({ name: member.name, type: member.type })
+    }
 
     const parameters = members.map(({ name, type }) => {
       return ts.createParameter(
@@ -413,7 +450,7 @@ export const macros = {
       ], true),
     )
 
-    return { original: statement, additional: [creator] }
+    return ctx.Ok({ replacement: statement, additional: [creator] })
   }),
 }
 ```
@@ -421,21 +458,22 @@ export const macros = {
 Type signature:
 
 ```ts
+import ts = require('typescript')
 export type DecoratorMacro = (
+  ctx: MacroContext,
   statement: ts.Statement,
   args: ts.NodeArray<ts.Expression>,
   typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => {
-  original?: ts.Statement,
-  additional?: ts.Statement[],
-};
+) => SpanResult<{
+  prepend?: ts.Statement[],
+  replacement: ts.Statement | undefined,
+  append?: ts.Statement[],
+}>;
 ```
 
 ### `ImportMacro`
 
 An import statement can use this form `import * as t from macroName!!('./some/path')` to create "virtual" typescript files at the path. Import macros are a lot like webpack/rollup loaders, except that the typescript file produced is typechecked and compiled just like any other.
-
-<!-- TODO document this properly. This system is generic over some type (`S`) for additional sources to be produced and processed along with the typescript, so it's possible to use import macros as the basis of a robust and typesafe bundling system. -->
 
 Let's imagine you had this yaml file describing some data:
 
@@ -475,10 +513,13 @@ import ts = require('typescript')
 import { ImportMacro } from './lib/transformer'
 
 export const macros = {
-  yaml: ImportMacro((_ctx, _targetPath, targetSource) => {
-    const obj = yaml.safeLoad(targetSource)
+  yaml: ImportMacro((ctx, targetSource, targetPath) => {
+    const obj = YAML.safeLoad(targetSource)
     if (typeof obj !== 'object')
-      throw new Error("some helpful message")
+      return ctx.Err(
+        targetPath, 'Invalid yaml',
+        `The "yaml" macro requires the yaml contents to be an object.`,
+      )
 
     const properties = Object.entries(obj).map(([key, value]) => {
       return ts.createPropertyAssignment(
@@ -493,21 +534,28 @@ export const macros = {
       undefined, ts.createObjectLiteral(properties, false),
     )
 
-    return { statements: [statement] }
+    return ctx.Ok({ statements: [statement] })
   }),
 }
 ```
 
 Type signature:
 
+<!-- TODO document this properly. This system is generic over some type (`S`) for additional sources to be produced and processed along with the typescript, so it's possible to use import macros as the basis of a robust and typesafe bundling system. -->
+
 ```ts
-export type ImportMacro = (
-  ctx: FileContext,
-  targetPath: string,
+import ts = require('typescript')
+export type ImportMacro<S = undefined> = (
+  ctx: MacroContext,
   targetSource: string,
-) => {
+  targetPath: string,
+  file: FileContext,
+) => SpanResult<{
   statements: ts.Statement[],
-}
+  // don't worry about this,
+  // it's just here for future improvements
+  sources?: Dict<S>,
+}>
 
 export type FileContext = {
   workingDir: string,
@@ -534,26 +582,18 @@ Overall, we want the macros to have these properties:
 
 ### Project non-goals:
 
-Anything that requires first-class support from the actual typescript compiler basically won't be considered. If the compiler devs decide to make our lives easier, I'll gladly accept it. But I'm not going to wait around for them.
+Anything that requires first-class support from the actual typescript compiler basically won't be considered. If the typescript team decides to make life easier, I'll gladly accept it. But I'm not going to wait around for them.
 
 - Hygienic Macros. This would be very complicated to get right without first-class support from the compiler.
 - Having a less ugly syntax. The `macroName!!` syntax is very ugly, but it's a hack that has some important properties. Suggestions for other syntaxes that meet these same requirements are welcome!
   - `!!` is accepted as valid syntax by the typescript parser.
-  - `identifier!!` is *technically* valid (asserting the identifier is non-nullish *twice*) but never actually useful. This makes it distinct from normal uses of the non-nullish assertion.
-- Alignment with javascript/typescript. As far as I'm concerned, javascript is just a compile target (and a lousy one). I'm not at all concerned with aligning with the language's norms.
+  - `!!` is visually obvious. A reader can tell that this usage is different than the surrounding code.
+  - `identifier!!` is *technically* valid (asserting the identifier is non-nullish *twice*) but never actually useful. This makes it distinct from normal uses of the non-nullish assertion, and doesn't conflict with any useful pattern.
+- Alignment with javascript/typescript. As far as I'm concerned, javascript is just a compile target (and a lousy one). I'm much more worried about expressive and safe code, and don't really care what microsoft corporation or the TC39 group would prefer.
 
 ## Project philosophy
 
-This project aims to fill the missing meta-programming gap in typescript.
-
-Anyone who's used a statically typed language with a powerful and safe macro/meta-programming system knows that they are essential to truly unlock the full power of the language. Statically typed languages without meta-programming are simply too inflexible to be truly productive, and statically typed languages *with* meta-programming are unbelievably safe and productive.
-
-You may be saying: but [typescript already has macros!](https://blog.logrocket.com/using-typescript-transforms-to-enrich-runtime-code-3fd2863221ed/) However, it's very important to notice that the transformation process allowed by the typescript compiler **don't typecheck the transformed output**. This makes them unsafe and not very useful.
-
-[Mapped](https://www.typescriptlang.org/docs/handbook/advanced-types.html#mapped-types) and [Conditional](https://www.typescriptlang.org/docs/handbook/advanced-types.html#conditional-types) types can do some of the work that traditional macros would usually do, but they aren't nearly complete.
-
-`macro-ts` attempts to solve that, at least in the short term. This project also adds some nice conveniences to using the compiler, and compiling for multiple simply defined targets.
-
+[This blog post describes my motivations for this project.](https://blainehansen.co/post/macro-ts/)
 
 ## Known Limitations
 
@@ -572,4 +612,4 @@ I don't know much about sourcemaps, and nice sourcemaps are less important to me
 ## Roadmap
 
 - [ ] Improve performance through caching, both of file data and build outputs.
-- [ ] Provide nice "codeframe" error functionality to macro functions.
+- [ ] Generalize compilation functions to allow using `macro-ts` to be used as the foundation of arbitrary specialized typesafe compilers, like a web application bundler.
