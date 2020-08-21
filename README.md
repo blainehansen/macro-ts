@@ -593,7 +593,7 @@ Anything that requires first-class support from the actual typescript compiler b
 
 ## Project philosophy
 
-[This blog post describes my motivations for this project.](https://blainehansen.co/post/macro-ts/)
+[This blog post describes my motivations for this project.](https://blainehansen.me/post/macro-ts/)
 
 ## Known Limitations
 
