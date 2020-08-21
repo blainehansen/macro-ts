@@ -17,9 +17,10 @@ chmod +x ./.macro-ts/dist/node-latest/bin/cli.js
 ./.macro-ts/dist/node-latest/bin/cli.js check examples/use.ts
 ./.macro-ts/dist/node-latest/bin/cli.js run examples/use.ts
 
-rm -rf ./.macro-ts/dist/browser*
+rm -rf ./.macro-ts/dist/browser* dist
+mv .macro-ts/dist dist
 
-mkdir ./.macro-ts/dist/register
-cat << EOF > ./.macro-ts/dist/register/index.js
-require('../node-latest/bin/register')
+mkdir -p ./register
+cat << EOF > ./register/index.js
+require('../dist/node-latest/bin/register')
 EOF

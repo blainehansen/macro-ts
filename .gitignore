@@ -58,6 +58,8 @@ typings/
 .env
 
 .macro-ts
+dist
+register
 
 .local*
 lab/_generate.from.ts
