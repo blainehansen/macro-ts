@@ -77,6 +77,8 @@ Typesafe macros can unlock huge productivity gains for any development team. Enj
 You can quickly run or check code without a project configuration file. This method is appropriate for rapid prototyping or experimentation, will use the `anywhere` compilation environment, and will optionally attempt to to load macros from a `.macros.ts` file in the current working directory.
 
 ```bash
+npm install --save-dev @blainehansen/macro-ts
+
 npx macro-ts run someScript.ts
 npx macro-ts check 'someDir/**/*.ts'
 ```
@@ -232,7 +234,7 @@ Here's a simple macros file:
 import {
   FunctionMacro, BlockMacro,
   DecoratorMacro, ImportMacro,
-} from 'macro-ts'
+} from '@blainehansen/macro-ts'
 
 export const macros = {
   f: FunctionMacro(/* ... */),
@@ -241,6 +243,8 @@ export const macros = {
   i: ImportMacro(/* ... */),
 }
 ```
+
+The `macro-ts` cli expects the macros file to export a dictionary named `macros`. `macro-ts` provides the `FunctionMacro`, `BlockMacro`, `DecoratorMacro`, and `ImportMacro` constructor functions to make writing macros easier.
 
 All macros are given a `MacroContext` object that contains helper functions for returning values from macros. These helpers basically all deal with `SpanResult<T>`, a type that signifies either that the macro was successful and is returning a value (using `Ok`), or that it failed and is returning some errors to show to the user (using `TsNodeErr` or `Err`). `TsNodeErr` is especially useful, since it allows you to give any typescript `Node` that will be highlighted as the source of the error, along with text describing it.
 
@@ -257,7 +261,6 @@ export type MacroContext = {
 };
 ```
 
-The `macro-ts` cli expects the macros file to export a dictionary named `macros`. The `macro-ts` library provides the `FunctionMacro`, `BlockMacro`, `DecoratorMacro`, and `ImportMacro` constructor functions to make writing macros easier.
 
 ### `FunctionMacro`
 
@@ -278,7 +281,7 @@ Example:
 
 ```ts
 import ts = require('typescript')
-import { FunctionMacro } from './lib/transformer'
+import { FunctionMacro } from '@blainehansen/macro-ts'
 
 export const macros = {
   required: FunctionMacro((ctx, args) => {
@@ -344,7 +347,7 @@ Example:
 
 ```ts
 import ts = require('typescript')
-import { BlockMacro } from './lib/transformer'
+import { BlockMacro } from '@blainehansen/macro-ts'
 
 export const macros = {
   repeat: BlockMacro((ctx, inputStatements) => {
@@ -402,7 +405,7 @@ Example:
 
 ```ts
 import ts = require('typescript')
-import { DecoratorMacro } from './lib/transformer'
+import { DecoratorMacro } from '@blainehansen/macro-ts'
 
 export const macros = {
   creator: DecoratorMacro((ctx, statement) => {
@@ -510,7 +513,7 @@ Example:
 ```ts
 import yaml = require('js-yaml')
 import ts = require('typescript')
-import { ImportMacro } from './lib/transformer'
+import { ImportMacro } from '@blainehansen/macro-ts'
 
 export const macros = {
   yaml: ImportMacro((ctx, targetSource, targetPath) => {

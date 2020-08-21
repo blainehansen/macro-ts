@@ -2,7 +2,9 @@
 	"name": "@blainehansen/macro-ts",
 	"version": "0.1.0",
 	"description": "An ergonomic typescript compiler that enables typesafe syntactic macros.",
-	"bin": ".macro-ts/dist/node-latest/bin/cli.js",
+	"bin": {
+		"macro-ts": ".macro-ts/dist/node-latest/bin/cli.js"
+	},
 	"main": ".macro-ts/dist/anywhere-latest/lib/index.js",
 	"types": ".macro-ts/dist/anywhere-latest/lib/index.d.ts",
 	"files": [".macro-ts/dist"],
@@ -28,6 +30,9 @@
 		"url": "https://github.com/blainehansen/macro-ts"
 	},
 	"license": "MIT",
+	"peerDependencies": {
+		"typescript": ">= 3.5.0"
+	},
 	"devDependencies": {
 		"@types/chai": "^4.2.12",
 		"@types/js-yaml": "^3.12.5",
