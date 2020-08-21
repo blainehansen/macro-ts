@@ -572,7 +572,7 @@ export type Dict<T> = { [key: string]: T };
 
 The simple but wonderful [`ts-creator` package](https://www.npmjs.com/package/ts-creator) makes it much easier to figure out how to generate typescript of a certain shape, so you can worry about making interesting macros rather than the minutiae of the typescript AST.
 
-I especially recommend the [cli](https://www.npmjs.com/package/ts-creator#cli-usage).
+[I especially recommend the cli.](https://www.npmjs.com/package/ts-creator#cli-usage)
 
 
 ## Project goals:
