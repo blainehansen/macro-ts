@@ -75,17 +75,31 @@ function makeDevModeOptions(devMode: boolean) {
 	return { noUnusedParameters: releaseMode, noUnusedLocals: releaseMode, preserveConstEnums: !releaseMode, removeComments: releaseMode }
 }
 
+import chalk = require('chalk')
+const filesColor = chalk.cyan
+const commandsColor = chalk.bold.magenta
+const environmentColor = chalk.bold.blue
+const progressColor = chalk.green
+const successColor = chalk.bold.green
+const errorColor = chalk.bold.red
+const warnColor = chalk.yellow
+
+function formatStringList(list: string[]) {
+	return list.map(s => filesColor(s)).join(', ')
+}
+
 export function reportDiagnostics(workingDir: string, diagnostics: readonly ts.Diagnostic[]): never {
 	const diagnosticText = ts.formatDiagnosticsWithColorAndContext(diagnostics, {
 		getNewLine: () => ts.sys.newLine,
 		getCurrentDirectory: () => workingDir,
 		getCanonicalFileName: ts.sys.useCaseSensitiveFileNames ? x => x : x => x.toLowerCase(),
 	})
-	return fatal(diagnosticText)
+	return fatal('\n' + diagnosticText)
 }
 
 
 type CompileArgs = {
+	includedLocations: string[],
 	entryFiles: Set<string>,
 	outDir: string,
 	environment: CompilationEnvironment,
@@ -109,7 +123,7 @@ function attemptGetConfig(workingDir: string) {
 		.change_err(e => e.message)
 		.try_change(obj => MacroTsConfig.decode(obj))
 
-	if (configResult.is_err()) fatal(`Invalid config:\n${configResult.error}`)
+	if (configResult.is_err()) fatal(`${errorColor(`Invalid config in`)} ${filesColor(configLocation)}\n${configResult.error}`)
 	return configResult.value
 }
 
@@ -136,7 +150,7 @@ function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
 
 	if (entryGlob === undefined) {
 		if (config === undefined)
-			fatal(`if an entryGlob isn't provided, a .macro-ts.toml config file must be present`)
+			fatal(errorColor(`if an entryGlob isn't provided, a `) + filesColor('.macro-ts.toml') + errorColor(` config file must be present`))
 
 		const outputs: Dict<CompileArgs> = {}
 		for (const { location, entry, exclude, environment, dev } of Object.values(config.packages)) {
@@ -147,11 +161,13 @@ function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
 				const outDir = CompilationEnvironment.key(environment)
 				const currentOutput = outputs[outDir]
 				// TODO need to figure out the tricky issue of dev disagreeing across packages
-				if (currentOutput)
+				if (currentOutput) {
+					currentOutput.includedLocations.push(location)
 					currentOutput.entryFiles = setExtend(currentOutput.entryFiles, entries)
+				}
 				else
 					outputs[outDir] = {
-						entryFiles: new Set(entries), outDir, dev, environment,
+						includedLocations: [location], entryFiles: new Set(entries), outDir, dev, environment,
 						...CompilationEnvironment.options(environment),
 					}
 			}
@@ -164,6 +180,7 @@ function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
 	}
 
 	const {
+		location = undefined,
 		environment = defaultEnvironment,
 		dev = false,
 	} = config ? MacroTsConfig.selectPackageForPath(entryGlob, config) || {} : {}
@@ -171,10 +188,10 @@ function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
 	const macrosEntry = config ? config.macros || defaultMacrosEntry : defaultMacrosEntry
 	const compileArgsList = [{
 		// outDir can be a pointless value since entryGlob being defined means we're running the check command
-		entryFiles: new Set(glob([entryGlob], [])), outDir: '.',
+		includedLocations: location ? [location] : [], entryFiles: new Set(glob([entryGlob], [])), outDir: '.',
 		dev, environment,
 		...CompilationEnvironment.options(environment)
-	} as CompileArgs]
+	}]
 
 	return { macrosEntry, configDevMode: dev, compileArgsList }
 }
@@ -182,7 +199,12 @@ function getCompileConfig(entryGlob: string | undefined, workingDir: string) {
 // TODO a good idea to add some kind of hash-enabled caching
 export function produceTransformer(macrosEntry: string, workingDir: string) {
 	const macrosContents = undefReadFile(macrosEntry)
-	if (macrosContents === undefined) return undefined
+	const macrosEntryFilePortion = filesColor(macrosEntry)
+	if (macrosContents === undefined) {
+		console.log(warnColor(`unable to read file at ${macrosEntryFilePortion}, proceeding without macros`))
+		return undefined
+	}
+	console.log(progressColor(`found macros file at ${macrosEntryFilePortion}`))
 
 	const macrosOptions = {
 		...alwaysOptions, noEmit: false, noEmitOnError: true, declaration: false, sourceMap: false,
@@ -230,7 +252,8 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 
 		return ts.updateSourceFileNode(sourceFile, finalStatements)
 	}])
-	if (!foundMacros) fatal("your macros file didn't export a `macros` identifier")
+	if (!foundMacros)
+		fatal(errorColor(`your macros file at ${macrosEntryFilePortion} didn't export a "macros" identifier`))
 
 
 	function dirMaker(sourceFileName: string) {
@@ -246,8 +269,11 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 	fs.rmdirSync(macrosOptions.outDir, { recursive: true })
 	const emitResult = macrosProgram.emit()
 	const wereErrors = emitResult.emitSkipped
-	if (wereErrors)
+	if (wereErrors) {
+		console.error(errorColor(`while compiling macros, type errors were encountered`))
 		reportDiagnostics(workingDir, emitResult.diagnostics)
+	}
+	console.log(progressColor(`macros compiled successfully`))
 
 	const macrosPath = nodepath.join(workingDir, './.macro-ts/macros/', nodepath.basename(macrosEntry, '.ts'))
 	const macros: Dict<Macro> = require(macrosPath).macros
@@ -266,15 +292,33 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 	if (shouldEmit)
 		fs.rmdirSync(emitDirectory, { recursive: true })
 
-	for (const { entryFiles, outDir, environment: { platform, target }, dev, module, lib, types } of compileArgsList) {
+	if (entryGlob !== undefined)
+		console.log('entry glob is: ' + filesColor(entryGlob))
+	if (devMode)
+		console.log(warnColor('dev mode enabled'))
+	console.log('')
+
+	for (const { includedLocations, entryFiles, outDir, environment: { platform, target }, dev, module, lib, types } of compileArgsList) {
 		const entries = [...entryFiles]
-		console.log(`checking: ${outDir}. files:`, entries)
+		const actualOutDir = nodepath.join(emitDirectory, outDir)
+		const commandPortion = commandsColor(shouldEmit ? 'building' : 'checking')
+		const environmentPortion = `platform ${environmentColor(platform)} and target ${environmentColor(ts.ScriptTarget[target])}`
+		const emitPortion = shouldEmit ? ` into ${filesColor(actualOutDir)}` : ''
+		const locationsPortion = includedLocations.length !== 0 ? formatStringList(includedLocations) : warnColor('no locations')
+
+		if (entryFiles.size === 0) {
+			console.warn(`${warnColor(`no files were matched`)} while ${commandPortion} ${locationsPortion} with ${environmentPortion}${emitPortion}`)
+			continue
+		}
+
+		console.log(`${commandPortion} ${locationsPortion} with ${environmentPortion}${emitPortion}`)
+		console.log(`includes these files: \n${formatStringList(entries)}`)
 		const compileOptions = {
 			...alwaysOptions, ...makeDevModeOptions(dev || devMode || configDevMode),
 			target, module, lib, types,
 			...(
 				shouldEmit
-					? { ...alwaysEmitOptions, outDir: nodepath.join(emitDirectory, outDir) }
+					? { ...alwaysEmitOptions, outDir: actualOutDir }
 					: nonEmitOptions
 			),
 		}
@@ -299,11 +343,10 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 			? finalProgram.emit().diagnostics
 			: ts.getPreEmitDiagnostics(finalProgram)
 
-		if (diagnostics.length) {
-			console.error(`while compiling ${outDir} for platform ${platform} and target ${ts.ScriptTarget[target]}:`)
+		if (diagnostics.length)
 			reportDiagnostics(workingDir, diagnostics)
-		}
-		console.log('no errors!\n')
+		else
+			console.log(successColor('🗸 🗸 🗸 no type errors 🗸 🗸 🗸\n'))
 	}
 }
 
@@ -321,6 +364,7 @@ function run(entryFile: string, runArgs: string[], devMode: boolean) {
 	register(entryFile, workingDir, devMode)
 
 	process.argv = ['node', nodepath.join(workingDir, entryFile), ...runArgs]
+	console.log(`${commandsColor('running')} ${filesColor(`${entryFile} ${runArgs.join(' ')}`)}`)
 	Module.runMain()
 }
 
@@ -406,6 +450,7 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 		const output = service.getEmitOutput(fileName)
 		const diagnostics = service.getSemanticDiagnostics(fileName).concat(service.getSyntacticDiagnostics(fileName))
 
+		const filesPortion = filesColor(nodepath.relative(workingDir, fileName))
 		if (diagnostics.length) {
 			const program = service.getProgram()!
 			let fileText = ''
@@ -414,17 +459,16 @@ export function register(entryFile: string | undefined, workingDir: string, devM
 				fileText = printer.printFile(sourceFile)
 				break
 			}
-			console.error('fileName:', fileName)
-			console.error(fileText)
-			console.error('')
+			console.error(errorColor(`type errors encountered in `) + filesPortion)
+			if (transformer)
+				console.error(`${chalk.italic.gray('this file has potentially been transformed by macros, so here is the transformed text:')}\n${fileText}`)
 			reportDiagnostics(workingDir, diagnostics)
 		}
 
 		if (output.emitSkipped)
-			fatal(`${nodepath.relative(workingDir, fileName)}: Emit skipped`)
-
+			fatal(`${errorColor('emit skipped')} for ${filesPortion}`)
 		if (output.outputFiles.length === 0)
-			fatal(`Unable to require file: ${nodepath.relative(workingDir, fileName)}`)
+			fatal(`${errorColor('Unable to require file:')} ${filesPortion}`)
 
 		const compiledCode = output.outputFiles[1].text
 		const sourceMap = JSON.parse(output.outputFiles[0].text)
@@ -514,22 +558,22 @@ export function main(argv: string[]) {
 	switch (command) {
 		case 'run':
 			const entryFile = args[0]
-			if (entryFile === undefined) fatal(`run expects a filename\n\n` + helpText)
+			if (entryFile === undefined) fatal(commandsColor('run') + errorColor(` expects a filename\n\n`) + helpText)
 			run(entryFile, args.slice(1), devMode)
 			break
 
 		case 'build':
-			if (args.length) fatal(`build accepts no positional arguments\n\n` + helpText)
+			if (args.length) fatal(commandsColor('build') + errorColor(` accepts no positional arguments\n\n`) + helpText)
 			build(devMode)
 			break
 
 		case 'check':
-			if (args.length > 1) fatal(`check can only accept one positional argument\n\n` + helpText)
+			if (args.length > 1) fatal(commandsColor('check') + errorColor(` can only accept one positional argument\n\n`) + helpText)
 			check(args[0], devMode)
 			break
 
 		default:
-			fatal(`invalid command: ${command}\n\n` + helpText)
+			fatal(`${errorColor('invalid command:')} ${command}\n\n` + helpText)
 	}
 }
 

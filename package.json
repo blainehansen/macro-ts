@@ -5,8 +5,8 @@
 	"bin": {
 		"macro-ts": "dist/node-latest/bin/cli.js"
 	},
-	"main": "dist/anywhere-latest/lib/index.js",
-	"types": "dist/anywhere-latest/lib/index.d.ts",
+	"main": "dist/node-latest/lib/index.js",
+	"types": "dist/node-latest/lib/index.d.ts",
 	"files": [
 		"dist",
 		"register"
@@ -15,6 +15,7 @@
 		"dev": "ts-node lib/message.ts",
 		"ts:ast": "ts-creator lab/_generate.from.ts --use-tabs true --trailing-comma 'all' -o lab/_generate.to.ts",
 		"build": "./build.sh",
+		"clean": "rm -rf dist register",
 		"test": "npm run test:examples",
 		"test:examples": "mocha -r ./register examples/use.test.ts",
 		"preversion": "npm run build && npm test",
