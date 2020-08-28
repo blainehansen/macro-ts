@@ -7,6 +7,11 @@
 	},
 	"main": "dist/lib/index.js",
 	"types": "dist/lib/index.d.ts",
+	"exports": {
+		".": "dist/lib/index.js",
+		"./": "dist/lib/",
+		"./register": "register/index.js"
+	},
 	"files": [
 		"dist",
 		"register"
