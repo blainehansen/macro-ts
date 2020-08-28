@@ -19,8 +19,3 @@ chmod +x ./.macro-ts/dist/node-latest/bin/cli.js
 
 rm -rf ./.macro-ts/dist/browser* dist
 mv .macro-ts/dist/node-latest/ dist
-
-mkdir -p ./register
-cat << EOF > ./register/index.js
-require('../dist/bin/register')
-EOF

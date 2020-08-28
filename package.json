@@ -3,18 +3,17 @@
 	"version": "0.1.4",
 	"description": "An ergonomic typescript compiler that enables typesafe syntactic macros.",
 	"bin": {
-		"macro-ts": "dist/bin/cli.js"
+		"macro-ts": "./dist/bin/cli.js"
 	},
-	"main": "dist/lib/index.js",
-	"types": "dist/lib/index.d.ts",
+	"main": "./dist/lib/index.js",
+	"types": "./dist/lib/index.d.ts",
 	"exports": {
-		".": "dist/lib/index.js",
-		"./": "dist/lib/",
-		"./register": "register/index.js"
+		".": "./dist/lib/index.js",
+		"./": "./dist/lib/",
+		"./register": "./dist/bin/register.js"
 	},
 	"files": [
-		"dist",
-		"register"
+		"dist"
 	],
 	"scripts": {
 		"dev": "ts-node lib/message.ts",
@@ -22,7 +21,7 @@
 		"build": "./build.sh",
 		"clean": "rm -rf dist register",
 		"test": "npm run test:examples",
-		"test:examples": "mocha -r ./register examples/use.test.ts",
+		"test:examples": "mocha -r ./dist/bin/register.js examples/use.test.ts",
 		"preversion": "npm run build && npm test",
 		"postversion": "git push origin master && git push origin master --tags && npm publish --access public"
 	},
