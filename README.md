@@ -314,15 +314,19 @@ Type signature:
 
 ```ts
 import ts = require('typescript')
-export type FunctionMacro = (
+export type FunctionMacroFn = (
   ctx: MacroContext,
   args: ts.NodeArray<ts.Expression>,
   typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => SpanResult<{
+) => FunctionMacroResult
+export type FunctionMacroResult = SpanResult<{
   prepend?: ts.Statement[],
   expression: ts.Expression,
   append?: ts.Statement[],
-}>;
+}>
+export function FunctionMacro(execute: FunctionMacroFn) {
+  /* ... */
+}
 ```
 
 
@@ -375,10 +379,14 @@ Type signature:
 
 ```ts
 import ts = require('typescript')
-export type BlockMacro = (
+export type BlockMacroFn = (
   ctx: MacroContext,
   args: ts.NodeArray<ts.Statement>,
-) => SpanResult<ts.Statement[]>;
+) => BlockMacroResult
+export type BlockMacroResult = SpanResult<ts.Statement[]>
+export function BlockMacro(execute: BlockMacroFn) {
+  /* ... */
+}
 ```
 
 ### `DecoratorMacro`
@@ -462,16 +470,20 @@ Type signature:
 
 ```ts
 import ts = require('typescript')
-export type DecoratorMacro = (
+export type DecoratorMacroFn = (
   ctx: MacroContext,
   statement: ts.Statement,
   args: ts.NodeArray<ts.Expression>,
   typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => SpanResult<{
+) => DecoratorMacroResult
+export type DecoratorMacroResult = SpanResult<{
   prepend?: ts.Statement[],
   replacement: ts.Statement | undefined,
   append?: ts.Statement[],
-}>;
+}>
+export function DecoratorMacro(execute: DecoratorMacroFn) {
+  /* ... */
+}
 ```
 
 ### `ImportMacro`
@@ -548,23 +560,25 @@ Type signature:
 
 ```ts
 import ts = require('typescript')
-export type ImportMacro<S = undefined> = (
+export type ImportMacroFn<S = undefined> = (
   ctx: MacroContext,
   targetSource: string,
   targetPath: string,
   file: FileContext,
-) => SpanResult<{
-  statements: ts.Statement[],
-  // don't worry about this,
-  // it's just here for future improvements
-  sources?: Dict<S>,
-}>
-
+) => ImportMacroResult<S>
 export type FileContext = {
   workingDir: string,
   currentDir: string, currentFile: string
 }
-export type Dict<T> = { [key: string]: T };
+export type ImportMacroResult<S = undefined> = SpanResult<{
+  statements: ts.Statement[],
+  sources?: Dict<S>,
+}>
+export type Dict<T> = { [key: string]: T }
+
+export function ImportMacro<S = undefined>(execute: ImportMacroFn<S>) {
+  /* ... */
+}
 ```
 
 

@@ -15,10 +15,10 @@ function printNodes(nodes: ts.Node[]) {
 }
 
 export type Macro<S = undefined> =
-	| { type: 'block', execute: BlockMacro }
-	| { type: 'function', execute: FunctionMacro }
-	| { type: 'decorator', execute: DecoratorMacro }
-	| { type: 'import', execute: ImportMacro<S> }
+	| { type: 'block', execute: BlockMacroFn }
+	| { type: 'function', execute: FunctionMacroFn }
+	| { type: 'decorator', execute: DecoratorMacroFn }
+	| { type: 'import', execute: ImportMacroFn<S> }
 
 export type SourceChannel<S> = (sources: Dict<S>) => void
 
@@ -121,11 +121,12 @@ export class Transformer<S> {
 	}
 }
 
-export type BlockMacro = (
+export type BlockMacroFn = (
 	ctx: MacroContext,
 	args: ts.NodeArray<ts.Statement>,
-) => SpanResult<ts.Statement[]>
-export function BlockMacro(execute: BlockMacro): PickVariants<Macro, 'type', 'block'> {
+) => BlockMacroResult
+export type BlockMacroResult = SpanResult<ts.Statement[]>
+export function BlockMacro(execute: BlockMacroFn): PickVariants<Macro, 'type', 'block'> {
 	return { type: 'block', execute }
 }
 
@@ -135,7 +136,7 @@ function attemptBlockMacro<S>(
 	statement: ts.Statement,
 	block: ts.Statement | undefined,
 	context: ts.TransformationContext,
-): SpanResult.UnSpan<ReturnType<BlockMacro>> | undefined {
+): SpanResult.UnSpan<BlockMacroResult> | undefined {
 	if (!(
 		ts.isExpressionStatement(statement)
 		&& ts.isNonNullExpression(statement.expression)
@@ -158,16 +159,17 @@ function attemptBlockMacro<S>(
 }
 
 
-export type FunctionMacro = (
+export type FunctionMacroFn = (
 	ctx: MacroContext,
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => SpanResult<{
+) => FunctionMacroResult
+export type FunctionMacroResult = SpanResult<{
 	prepend?: ts.Statement[],
 	expression: ts.Expression,
 	append?: ts.Statement[],
 }>
-export function FunctionMacro(execute: FunctionMacro): PickVariants<Macro, 'type', 'function'> {
+export function FunctionMacro(execute: FunctionMacroFn): PickVariants<Macro, 'type', 'function'> {
 	return { type: 'function', execute }
 }
 
@@ -175,7 +177,7 @@ function attemptFunctionMacro<S>(
 	ctx: CompileContext<S>,
 	node: ts.Node,
 	argumentsVisitor: (args: ts.NodeArray<ts.Expression>) => ts.NodeArray<ts.Expression>,
-): SpanResult.UnSpan<ReturnType<FunctionMacro>> | undefined {
+): SpanResult.UnSpan<FunctionMacroResult> | undefined {
 	if (!(
 		ts.isCallExpression(node)
 		&& ts.isNonNullExpression(node.expression)
@@ -195,13 +197,18 @@ function attemptFunctionMacro<S>(
 }
 
 
-export type DecoratorMacro = (
+export type DecoratorMacroFn = (
 	ctx: MacroContext,
 	statement: ts.Statement,
 	args: ts.NodeArray<ts.Expression>,
 	typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
-) => SpanResult<{ prepend?: ts.Statement[], replacement: ts.Statement | undefined, append?: ts.Statement[] }>
-export function DecoratorMacro(execute: DecoratorMacro): PickVariants<Macro, 'type', 'decorator'> {
+) => DecoratorMacroResult
+export type DecoratorMacroResult = SpanResult<{
+	prepend?: ts.Statement[],
+	replacement: ts.Statement | undefined,
+	append?: ts.Statement[],
+}>
+export function DecoratorMacro(execute: DecoratorMacroFn): PickVariants<Macro, 'type', 'decorator'> {
 	return { type: 'decorator', execute }
 }
 
@@ -270,16 +277,17 @@ export type FileContext = {
 	currentDir: string, currentFile: string
 }
 
-export type ImportMacro<S = undefined> = (
+export type ImportMacroFn<S = undefined> = (
 	ctx: MacroContext,
 	targetSource: string,
 	targetPath: string,
 	file: FileContext,
-) => SpanResult<{
+) => ImportMacroResult<S>
+export type ImportMacroResult<S = undefined> = SpanResult<{
 	statements: ts.Statement[],
 	sources?: Dict<S>,
 }>
-export function ImportMacro<S = undefined>(execute: ImportMacro<S>): PickVariants<Macro<S>, 'type', 'import'> {
+export function ImportMacro<S = undefined>(execute: ImportMacroFn<S>): PickVariants<Macro<S>, 'type', 'import'> {
 	return { type: 'import', execute }
 }
 

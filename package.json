@@ -3,10 +3,10 @@
 	"version": "0.1.2",
 	"description": "An ergonomic typescript compiler that enables typesafe syntactic macros.",
 	"bin": {
-		"macro-ts": "dist/node-latest/bin/cli.js"
+		"macro-ts": "dist/bin/cli.js"
 	},
-	"main": "dist/node-latest/lib/index.js",
-	"types": "dist/node-latest/lib/index.d.ts",
+	"main": "dist/lib/index.js",
+	"types": "dist/lib/index.d.ts",
 	"files": [
 		"dist",
 		"register"
