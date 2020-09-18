@@ -6,6 +6,4 @@ export {
 	ImportMacro, ImportMacroFn, ImportMacroResult,
 } from './transformer'
 
-export { SpanResult } from './message'
-
 export { Dict } from './utils'

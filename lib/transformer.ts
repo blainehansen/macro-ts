@@ -47,6 +47,7 @@ export type MacroContext = {
 	Err: (fileName: string, title: string, ...paragraphs: string[]) => SpanResult<any>,
 	tsNodeWarn: (node: ts.TextRange, title: string, ...paragraphs: string[]) => void,
 	warn: (fileName: string, title: string, ...paragraphs: string[]) => void,
+	subsume: <T>(result: SpanResult<T>) => Result<T, void>,
 }
 
 export class Transformer<S> {
@@ -88,6 +89,7 @@ export class Transformer<S> {
 					Err: (fileName, title, ...paragraphs) => SpanResult.Err(fileName, title, paragraphs),
 					tsNodeWarn: (node, title, ...paragraphs) => { ctx.tsNodeWarn(node, title, paragraphs) },
 					warn: (fileName, title, ...paragraphs) => { ctx.warn(fileName, title, paragraphs) },
+					subsume: result => ctx.subsume(result),
 				},
 			}, sourceFile.statements, context)
 
