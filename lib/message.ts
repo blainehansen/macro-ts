@@ -33,19 +33,17 @@ export function SpanWarning(region: Span | string, title: string, paragraphs: st
 	return { region, title, message: paragraphs.join('\n'), error: false } as SpanWarning
 }
 
-export type SpanResult<T> = [Result<T, NonEmpty<SpanError>>, SpanWarning[]?]
+type W = { warnings?: SpanWarning[] }
+export type SpanResult<T> = Result<{ value: T } & W, { errors: NonEmpty<SpanError> } & W>
 export namespace SpanResult {
-	// export function Ok<T>(value: T, warnings?: SpanWarning[]): SpanResult<T> {
-	// 	return [MonadsOk(value), warnings]
-	// }
-	export function Ok<T>(value: T): SpanResult<T> {
-		return [MonadsOk(value)]
+	export function Ok<T>(value: T, warnings?: SpanWarning[]): SpanResult<T> {
+		return MonadsOk({ value, warnings })
 	}
 	export function TsNodeErr(sourceFile: ts.SourceFile, node: ts.TextRange, title: string, paragraphs: string[]): SpanResult<any> {
-		return [MonadsErr([SpanError(Span.fromTsNode(sourceFile, node), title, paragraphs)])]
+		return MonadsErr({ errors: [SpanError(Span.fromTsNode(sourceFile, node), title, paragraphs)] })
 	}
 	export function Err(fileName: string, title: string, paragraphs: string[]): SpanResult<any> {
-		return [MonadsErr([SpanError(fileName, title, paragraphs)])]
+		return MonadsErr({ errors: [SpanError(fileName, title, paragraphs)] })
 	}
 
 	export type UnSpan<R extends SpanResult<any>> = R extends SpanResult<infer T> ? Result<T, void> : never
@@ -65,12 +63,18 @@ export namespace SpanResult {
 
 		constructor(readonly sourceFile: ts.SourceFile) {}
 
-		subsume<T>([result, warnings]: SpanResult<T>): Result<T, void> {
+		subsume<T>(result: SpanResult<T>): Result<T, void> {
+			if (result.is_ok()) {
+				const { value, warnings } = result.value
+				if (warnings && warnings.length)
+					this.warnings = this.warnings.concat(warnings)
+				return MonadsOk(value)
+			}
+
+			const { errors, warnings } = result.error
 			if (warnings && warnings.length)
 				this.warnings = this.warnings.concat(warnings)
-
-			if (result.is_ok()) return MonadsOk(result.value)
-			this.errors = this.errors.concat(result.error)
+			this.errors = this.errors.concat(errors)
 			return MonadsErr(undefined as void)
 		}
 		tsNodeWarn(node: ts.TextRange, title: string, paragraphs: string[]) {

@@ -42,7 +42,7 @@ type CompileContext<S> = {
 }
 
 export type MacroContext = {
-	Ok: <T>(value: T) => SpanResult<T>,
+	Ok: <T>(value: T, warnings?: SpanWarning[]) => SpanResult<T>,
 	TsNodeErr: (node: ts.TextRange, title: string, ...paragraphs: string[]) => SpanResult<any>,
 	Err: (fileName: string, title: string, ...paragraphs: string[]) => SpanResult<any>,
 	tsNodeWarn: (node: ts.TextRange, title: string, ...paragraphs: string[]) => void,
@@ -84,7 +84,7 @@ export class Transformer<S> {
 				subsume: result => ctx.subsume(result),
 				Err: (node, title, message) => ctx.Err(node, title, message),
 				macroCtx: {
-					Ok: value => SpanResult.Ok(value),
+					Ok: (value, warnings) => SpanResult.Ok(value, warnings),
 					TsNodeErr: (node, title, ...paragraphs) => SpanResult.TsNodeErr(ctx.sourceFile, node, title, paragraphs),
 					Err: (fileName, title, ...paragraphs) => SpanResult.Err(fileName, title, paragraphs),
 					tsNodeWarn: (node, title, ...paragraphs) => { ctx.tsNodeWarn(node, title, paragraphs) },
