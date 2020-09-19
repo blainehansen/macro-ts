@@ -223,6 +223,7 @@ function attemptDecoratorMacros<S>(
 
 	let currentStatement = statement as ts.Statement | undefined
 	const decorators = statement.decorators.slice()
+	statement.decorators = undefined
 	const prepends = [] as ts.Statement[]
 	const appends = [] as ts.Statement[]
 	for (const { expression } of decorators) {
