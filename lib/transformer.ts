@@ -223,7 +223,7 @@ function attemptDecoratorMacros<S>(
 
 	let currentStatement = statement as ts.Statement | undefined
 	const decorators = statement.decorators.slice()
-	statement.decorators = undefined
+	;(statement as unknown as { decorators?: ts.NodeArray<ts.Decorator> }).decorators = undefined
 	const prepends = [] as ts.Statement[]
 	const appends = [] as ts.Statement[]
 	for (const { expression } of decorators) {
@@ -420,8 +420,8 @@ function attemptVisitStatement<S>(
 	}
 	function visitArgsSubsuming(args: ts.NodeArray<ts.Expression>) {
 		const nodeArray = ts.createNodeArray(args.map(visitNodeSubsuming))
-		nodeArray.pos = args.pos
-		nodeArray.end = args.end
+		;(nodeArray as unknown as ts.TextRange).pos = args.pos
+		;(nodeArray as unknown as ts.TextRange).end = args.end
 		return nodeArray
 	}
 	function visitChildrenSubsuming<N extends ts.Node>(node: N): N {
@@ -657,7 +657,7 @@ function flatVisitStatements<S>(
 	}
 
 	const nodeArray = ts.createNodeArray(finalStatements)
-	nodeArray.pos = statements.pos
-	nodeArray.end = statements.end
+	;(nodeArray as unknown as ts.TextRange).pos = statements.pos
+	;(nodeArray as unknown as ts.TextRange).end = statements.end
 	return nodeArray
 }

@@ -266,7 +266,7 @@ export function produceTransformer(macrosEntry: string, workingDir: string) {
 	const macrosCompilerHost = createInterceptingHost(dummyTransformer, macrosOptions)
 	const macrosProgram = ts.createProgram([macrosEntry], macrosOptions, macrosCompilerHost)
 
-	fs.rmdirSync(macrosOptions.outDir, { recursive: true })
+	fs.rmSync(macrosOptions.outDir, { recursive: true, force: true })
 	const emitResult = macrosProgram.emit()
 	const wereErrors = emitResult.emitSkipped
 	if (wereErrors) {
@@ -290,7 +290,7 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 
 	const emitDirectory = './.macro-ts/dist'
 	if (shouldEmit)
-		fs.rmdirSync(emitDirectory, { recursive: true })
+		fs.rmSync(emitDirectory, { recursive: true, force: true })
 
 	if (entryGlob !== undefined)
 		console.log('entry glob is: ' + filesColor(entryGlob))
@@ -346,7 +346,7 @@ export function compile(entryGlob: string | undefined, devMode: boolean, shouldE
 		if (diagnostics.length)
 			reportDiagnostics(workingDir, diagnostics)
 		else
-			console.log(successColor('🗸 🗸 🗸 no type errors 🗸 🗸 🗸\n'))
+			console.log(successColor('no type errors\n'))
 	}
 }
 
