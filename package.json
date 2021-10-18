@@ -23,7 +23,7 @@
 		"test": "npm run test:examples",
 		"test:examples": "mocha -r ./dist/bin/register.js examples/use.test.ts",
 		"preversion": "npm run build && npm test",
-		"postversion": "git push origin master && git push origin master --tags && npm publish --access public"
+		"postversion": "git push origin main && git push origin main --tags && npm publish --access public"
 	},
 	"keywords": [
 		"typescript",
